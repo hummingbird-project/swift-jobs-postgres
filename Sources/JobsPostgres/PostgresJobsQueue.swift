@@ -22,7 +22,7 @@ import PostgresNIO
 
 /// Postgres Job queue implementation
 ///
-/// The Postgres driver uses the database migration service ``/HummingbirdPostgres/PostgresMigrations``
+/// The Postgres driver uses the database migration service ``/PostgresMigrations/DatabaseMigrations``
 /// to create its database tables. Before the server is running you should run the migrations
 /// to build your table.
 /// ```
@@ -350,6 +350,7 @@ extension JobQueueDriver where Self == PostgresJobQueue {
     /// Return Postgres driver for Job Queue
     /// - Parameters:
     ///   - client: Postgres client
+    ///   - migrations: Database migration collection to add postgres job queue migrations to
     ///   - configuration: Queue configuration
     ///   - logger: Logger used by queue
     public static func postgres(client: PostgresClient, migrations: DatabaseMigrations, configuration: PostgresJobQueue.Configuration = .init(), logger: Logger) async -> Self {
