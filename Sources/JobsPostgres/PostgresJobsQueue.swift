@@ -122,7 +122,11 @@ public final class PostgresJobQueue: JobQueueDriver {
             _ = try await self.client.withConnection { connection in
                 self.logger.info("Update Jobs at initialization")
                 try await self.updateJobsOnInit(withStatus: .pending, onInit: self.configuration.pendingJobsInitialization, connection: connection)
-                try await self.updateJobsOnInit(withStatus: .processing, onInit: self.configuration.processingJobsInitialization, connection: connection)
+                try await self.updateJobsOnInit(
+                    withStatus: .processing,
+                    onInit: self.configuration.processingJobsInitialization,
+                    connection: connection
+                )
                 try await self.updateJobsOnInit(withStatus: .failed, onInit: self.configuration.failedJobsInitialization, connection: connection)
             }
         } catch let error as PSQLError {
@@ -229,14 +233,20 @@ public final class PostgresJobQueue: JobQueueDriver {
             }
             return try result.get()
         } catch let error as PSQLError {
-            logger.error("Failed to get job from queue", metadata: [
-                "error": "\(String(reflecting: error))",
-            ])
+            logger.error(
+                "Failed to get job from queue",
+                metadata: [
+                    "error": "\(String(reflecting: error))"
+                ]
+            )
             throw error
         } catch let error as JobQueueError {
-            logger.error("Job failed", metadata: [
-                "error": "\(String(reflecting: error))",
-            ])
+            logger.error(
+                "Job failed",
+                metadata: [
+                    "error": "\(String(reflecting: error))"
+                ]
+            )
             throw error
         }
     }
@@ -342,7 +352,7 @@ extension PostgresJobQueue {
     }
 
     public func makeAsyncIterator() -> AsyncIterator {
-        return .init(queue: self)
+        .init(queue: self)
     }
 }
 
@@ -353,7 +363,12 @@ extension JobQueueDriver where Self == PostgresJobQueue {
     ///   - migrations: Database migration collection to add postgres job queue migrations to
     ///   - configuration: Queue configuration
     ///   - logger: Logger used by queue
-    public static func postgres(client: PostgresClient, migrations: DatabaseMigrations, configuration: PostgresJobQueue.Configuration = .init(), logger: Logger) async -> Self {
+    public static func postgres(
+        client: PostgresClient,
+        migrations: DatabaseMigrations,
+        configuration: PostgresJobQueue.Configuration = .init(),
+        logger: Logger
+    ) async -> Self {
         await Self(client: client, migrations: migrations, configuration: configuration, logger: logger)
     }
 }
