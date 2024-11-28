@@ -14,15 +14,16 @@
 
 import Atomics
 import Jobs
-@testable import JobsPostgres
 import NIOConcurrencyHelpers
 import PostgresMigrations
 import PostgresNIO
 import ServiceLifecycle
 import XCTest
 
+@testable import JobsPostgres
+
 func getPostgresConfiguration() async throws -> PostgresClient.Configuration {
-    return .init(
+    .init(
         host: ProcessInfo.processInfo.environment["POSTGRES_HOSTNAME"] ?? "localhost",
         port: 5432,
         username: ProcessInfo.processInfo.environment["POSTGRES_USER"] ?? "test_user",
@@ -48,7 +49,11 @@ final class JobsTests: XCTestCase {
         #endif
     }
 
-    func createJobQueue(numWorkers: Int, configuration: PostgresJobQueue.Configuration, function: String = #function) async throws -> JobQueue<PostgresJobQueue> {
+    func createJobQueue(
+        numWorkers: Int,
+        configuration: PostgresJobQueue.Configuration,
+        function: String = #function
+    ) async throws -> JobQueue<PostgresJobQueue> {
         let logger = {
             var logger = Logger(label: function)
             logger.logLevel = .debug
@@ -181,7 +186,8 @@ final class JobsTests: XCTestCase {
                 id: jobIdentifer,
                 parameters: 1,
                 options: .init(
-                    delayUntil: Date.now.addingTimeInterval(1))
+                    delayUntil: Date.now.addingTimeInterval(1)
+                )
             )
             try await jobQueue.push(id: jobIdentifer2, parameters: 5)
 
@@ -361,7 +367,10 @@ final class JobsTests: XCTestCase {
             succeededExpectation.fulfill()
             finished.store(true, ordering: .relaxed)
         }
-        let jobQueue = try await createJobQueue(numWorkers: 1, configuration: .init(pendingJobsInitialization: .remove, failedJobsInitialization: .rerun))
+        let jobQueue = try await createJobQueue(
+            numWorkers: 1,
+            configuration: .init(pendingJobsInitialization: .remove, failedJobsInitialization: .rerun)
+        )
         jobQueue.registerJob(job)
         try await self.testJobQueue(jobQueue: jobQueue, revertMigrations: true) { jobQueue in
             // stall to give onInit a chance to run, so it can remove any pendng jobs

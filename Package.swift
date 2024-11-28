@@ -6,7 +6,7 @@ let package = Package(
     name: "swift-jobs-postgres",
     platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17)],
     products: [
-        .library(name: "JobsPostgres", targets: ["JobsPostgres"]),
+        .library(name: "JobsPostgres", targets: ["JobsPostgres"])
     ],
     dependencies: [
         .package(url: "https://github.com/hummingbird-project/swift-jobs.git", from: "1.0.0-beta.4"),
@@ -25,7 +25,7 @@ let package = Package(
         .testTarget(
             name: "JobsPostgresTests",
             dependencies: [
-                "JobsPostgres",
+                "JobsPostgres"
             ]
         ),
     ]
