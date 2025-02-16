@@ -280,10 +280,8 @@ public final class PostgresJobQueue: JobQueueDriver {
             """
             INSERT INTO _hb_pg_job_queue (job_id, createdAt, delayed_until)
             VALUES (\(jobId), \(Date.now), \(delayUntil))
-            ON CONFLICT (job_id)
-            DO UPDATE
-            SET delayed_until = COALESCE(_hb_pg_job_queue.delayed_until, EXCLUDED.delayed_until),
-                createdAt = \(Date.now)
+            -- We have found an existing job with the same id, SKIP this INSERT 
+            ON CONFLICT (job_id) DO NOTHING
             """,
             logger: self.logger
         )
