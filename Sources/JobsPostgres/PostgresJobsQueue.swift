@@ -130,9 +130,12 @@ public final class PostgresJobQueue: JobQueueDriver {
                 try await self.updateJobsOnInit(withStatus: .failed, onInit: self.configuration.failedJobsInitialization, connection: connection)
             }
         } catch let error as PSQLError {
-            logger.error("JobQueue initialization failed", metadata: [
-                "error": "\(String(reflecting: error))"
-            ])
+            logger.error(
+                "JobQueue initialization failed",
+                metadata: [
+                    "error": "\(String(reflecting: error))"
+                ]
+            )
             throw error
         }
     }
