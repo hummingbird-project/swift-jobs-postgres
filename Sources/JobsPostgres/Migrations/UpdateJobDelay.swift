@@ -27,7 +27,14 @@ struct UpdateJobDelay: DatabaseMigration {
     func apply(connection: PostgresConnection, logger: Logger) async throws {
         try await connection.query(
             """
-            ALTER TABLE _hb_pg_job_queue ALTER COLUMN delayed_until SET NOT NULL, ALTER COLUMN delayed_until SET DEFAULT NOW()
+            ALTER TABLE _hb_pg_job_queue ALTER COLUMN delayed_until SET DEFAULT NOW()
+            """,
+            logger: logger
+        )
+        
+        try await connection.query(
+            """
+            ALTER TABLE _hb_pg_job_queue ALTER COLUMN delayed_until SET NOT NULL
             """,
             logger: logger
         )
@@ -36,6 +43,11 @@ struct UpdateJobDelay: DatabaseMigration {
     func revert(connection: PostgresConnection, logger: Logger) async throws {
         try await connection.query(
             "ALTER TABLE _hb_pg_job_queue ALTER COLUMN delayed_until DROP NOT NULL",
+            logger: logger
+        )
+        
+        try await connection.query(
+            "ALTER TABLE _hb_pg_job_queue ALTER COLUMN delayed_until SET DEFAULT NULL",
             logger: logger
         )
     }
