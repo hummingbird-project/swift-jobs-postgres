@@ -27,7 +27,7 @@ struct UpdateJobDelay: DatabaseMigration {
     func apply(connection: PostgresConnection, logger: Logger) async throws {
         try await connection.query(
             """
-            ALTER TABLE _hb_pg_job_queue ALTER COLUMN delayed_until TYPE TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            ALTER TABLE _hb_pg_job_queue ALTER COLUMN delayed_until SET NOT NULL, ALTER COLUMN delayed_until SET DEFAULT NOW()
             """,
             logger: logger
         )
