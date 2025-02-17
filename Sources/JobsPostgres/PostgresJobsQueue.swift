@@ -277,10 +277,11 @@ public final class PostgresJobQueue: JobQueueDriver {
     }
 
     func addToQueue(jobId: JobID, connection: PostgresConnection, delayUntil: Date?) async throws {
+        // TODO: assign Date.now in swift-jobs options?
         try await connection.query(
             """
             INSERT INTO _hb_pg_job_queue (job_id, createdAt, delayed_until)
-            VALUES (\(jobId), \(Date.now), \(delayUntil))
+            VALUES (\(jobId), \(Date.now), \(delayUntil ?? Date.now))
             -- We have found an existing job with the same id, SKIP this INSERT 
             ON CONFLICT (job_id) DO NOTHING
             """,
