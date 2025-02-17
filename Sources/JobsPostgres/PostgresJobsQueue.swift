@@ -112,6 +112,7 @@ public final class PostgresJobQueue: JobQueueDriver {
         await migrations.add(CreateJobQueue())
         await migrations.add(CreateJobQueueMetadata())
         await migrations.add(CreateJobDelay())
+        await migrations.add(UpdateJobDelay())
     }
 
     /// Run on initialization of the job queue
@@ -203,7 +204,7 @@ public final class PostgresJobQueue: JobQueueDriver {
                             SELECT
                                 job_id
                             FROM _hb_pg_job_queue
-                            WHERE (delayed_until IS NULL OR delayed_until <= NOW())
+                            WHERE delayed_until <= NOW()
                             ORDER BY createdAt, delayed_until ASC
                             FOR UPDATE SKIP LOCKED
                             LIMIT 1
