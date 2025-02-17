@@ -11,7 +11,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/hummingbird-project/swift-jobs.git", from: "1.0.0-beta.4"),
         .package(url: "https://github.com/hummingbird-project/hummingbird-postgres.git", from: "0.5.0"),
-        .package(url: "https://github.com/vapor/postgres-nio.git", from: "1.21.0"),
+        .package(url: "https://github.com/vapor/postgres-nio.git", from: "1.25.0"),
     ],
     targets: [
         .target(
