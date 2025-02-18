@@ -112,6 +112,7 @@ public final class PostgresJobQueue: JobQueueDriver {
         await migrations.add(CreateJobQueue())
         await migrations.add(CreateJobQueueMetadata())
         await migrations.add(CreateJobDelay())
+        await migrations.add(UpdateJobDelay())
     }
 
     /// Run on initialization of the job queue
@@ -130,7 +131,12 @@ public final class PostgresJobQueue: JobQueueDriver {
                 try await self.updateJobsOnInit(withStatus: .failed, onInit: self.configuration.failedJobsInitialization, connection: connection)
             }
         } catch let error as PSQLError {
-            print("\(String(reflecting: error))")
+            logger.error(
+                "JobQueue initialization failed",
+                metadata: [
+                    "error": "\(String(reflecting: error))"
+                ]
+            )
             throw error
         }
     }
@@ -194,17 +200,19 @@ public final class PostgresJobQueue: JobQueueDriver {
 
                     let stream = try await connection.query(
                         """
+                        WITH next_job AS (
+                            SELECT
+                                job_id
+                            FROM _hb_pg_job_queue
+                            WHERE delayed_until <= NOW()
+                            ORDER BY createdAt, delayed_until ASC
+                            FOR UPDATE SKIP LOCKED
+                            LIMIT 1
+                        )
                         DELETE FROM
                             _hb_pg_job_queue
-                        USING (
-                            SELECT job_id FROM _hb_pg_job_queue
-                            WHERE (delayed_until IS NULL OR delayed_until <= NOW())
-                            ORDER BY createdAt, delayed_until ASC
-                            LIMIT 1
-                            FOR UPDATE SKIP LOCKED
-                        ) queued
-                        WHERE queued.job_id = _hb_pg_job_queue.job_id
-                        RETURNING _hb_pg_job_queue.job_id
+                        WHERE job_id = (SELECT job_id FROM next_job)
+                        RETURNING job_id
                         """,
                         logger: self.logger
                     )
@@ -214,7 +222,7 @@ public final class PostgresJobQueue: JobQueueDriver {
                     }
                     // select job from job table
                     let stream2 = try await connection.query(
-                        "SELECT job FROM _hb_pg_jobs WHERE id = \(jobId) FOR UPDATE SKIP LOCKED",
+                        "SELECT job FROM _hb_pg_jobs WHERE id = \(jobId)",
                         logger: self.logger
                     )
 
@@ -269,12 +277,13 @@ public final class PostgresJobQueue: JobQueueDriver {
     }
 
     func addToQueue(jobId: JobID, connection: PostgresConnection, delayUntil: Date?) async throws {
+        // TODO: assign Date.now in swift-jobs options?
         try await connection.query(
             """
             INSERT INTO _hb_pg_job_queue (job_id, createdAt, delayed_until)
-            VALUES (\(jobId), \(Date.now), \(delayUntil))
-            ON CONFLICT (job_id)
-            DO UPDATE SET delayed_until = \(delayUntil)
+            VALUES (\(jobId), \(Date.now), \(delayUntil ?? Date.now))
+            -- We have found an existing job with the same id, SKIP this INSERT 
+            ON CONFLICT (job_id) DO NOTHING
             """,
             logger: self.logger
         )
@@ -315,8 +324,6 @@ public final class PostgresJobQueue: JobQueueDriver {
             )
 
         case .rerun:
-            guard status != .pending else { return }
-
             let jobs = try await getJobs(withStatus: status)
             self.logger.info("Moving \(jobs.count) jobs with status: \(status) to job queue")
             for jobId in jobs {
