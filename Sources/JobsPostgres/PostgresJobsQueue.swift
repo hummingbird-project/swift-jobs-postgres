@@ -235,7 +235,13 @@ public final class PostgresJobQueue: JobQueueDriver {
                         return Result.success(QueuedJob(id: jobId, jobBuffer: buffer))
                     } catch {
                         try await self.setStatus(jobId: jobId, status: .failed, connection: connection)
-                        return Result.failure(JobQueueError.decodeJobFailed)
+                        return Result.failure(
+                            JobQueueError(
+                                code: .decodeJobFailed,
+                                jobName: nil,
+                                details: "\(String(reflecting: error))"
+                            )
+                        )
                     }
                 }
             }
@@ -276,12 +282,12 @@ public final class PostgresJobQueue: JobQueueDriver {
         )
     }
 
-    func addToQueue(jobId: JobID, connection: PostgresConnection, delayUntil: Date?) async throws {
+    func addToQueue(jobId: JobID, connection: PostgresConnection, delayUntil: Date) async throws {
         // TODO: assign Date.now in swift-jobs options?
         try await connection.query(
             """
             INSERT INTO _hb_pg_job_queue (job_id, createdAt, delayed_until)
-            VALUES (\(jobId), \(Date.now), \(delayUntil ?? Date.now))
+            VALUES (\(jobId), \(Date.now), \(delayUntil))
             -- We have found an existing job with the same id, SKIP this INSERT 
             ON CONFLICT (job_id) DO NOTHING
             """,
@@ -327,7 +333,7 @@ public final class PostgresJobQueue: JobQueueDriver {
             let jobs = try await getJobs(withStatus: status)
             self.logger.info("Moving \(jobs.count) jobs with status: \(status) to job queue")
             for jobId in jobs {
-                try await self.addToQueue(jobId: jobId, connection: connection, delayUntil: nil)
+                try await self.addToQueue(jobId: jobId, connection: connection, delayUntil: Date.now)
             }
 
         case .doNothing:
