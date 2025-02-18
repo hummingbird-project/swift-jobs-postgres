@@ -28,6 +28,8 @@ jobs:
           - 'postgres:16'
           - 'postgres:14'
         include:
+          - postgres-image: postgres:17
+            postgres-auth: scram-sha-256
           - postgres-image: postgres:16
             postgres-auth: scram-sha-256
           - postgres-image: postgres:14
