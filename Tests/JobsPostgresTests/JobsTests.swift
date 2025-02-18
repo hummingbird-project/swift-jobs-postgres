@@ -51,7 +51,7 @@ final class JobsTests: XCTestCase {
 
     func createJobQueue(
         numWorkers: Int,
-        configuration: PostgresJobQueue.Configuration,
+        configuration: PostgresJobQueue.Configuration = .init(),
         function: String = #function
     ) async throws -> JobQueue<PostgresJobQueue> {
         let logger = {
@@ -87,6 +87,9 @@ final class JobsTests: XCTestCase {
     /// shutdown correctly
     @discardableResult public func testJobQueue<T>(
         jobQueue: JobQueue<PostgresJobQueue>,
+        failedJobsInitialization: PostgresJobQueue.JobInitialization = .remove,
+        processingJobsInitialization: PostgresJobQueue.JobInitialization = .remove,
+        pendingJobsInitialization: PostgresJobQueue.JobInitialization = .doNothing,
         revertMigrations: Bool = false,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
     ) async throws -> T {
@@ -110,6 +113,7 @@ final class JobsTests: XCTestCase {
                         try await migrations.revert(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
                     }
                     try await migrations.apply(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
+                    try await jobQueue.queue.cleanup(failedJobs: failedJobsInitialization, processingJobs: processingJobsInitialization)
                     let value = try await test(jobQueue)
                     await serviceGroup.triggerGracefulShutdown()
                     return value
@@ -134,13 +138,20 @@ final class JobsTests: XCTestCase {
     /// shutdown correctly
     @discardableResult public func testJobQueue<T>(
         numWorkers: Int,
-        configuration: PostgresJobQueue.Configuration = .init(failedJobsInitialization: .remove, processingJobsInitialization: .remove),
+        failedJobsInitialization: PostgresJobQueue.JobInitialization = .remove,
+        processingJobsInitialization: PostgresJobQueue.JobInitialization = .remove,
         revertMigrations: Bool = true,
         function: String = #function,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
     ) async throws -> T {
-        let jobQueue = try await self.createJobQueue(numWorkers: numWorkers, configuration: configuration, function: function)
-        return try await self.testJobQueue(jobQueue: jobQueue, revertMigrations: revertMigrations, test: test)
+        let jobQueue = try await self.createJobQueue(numWorkers: numWorkers, configuration: .init(), function: function)
+        return try await self.testJobQueue(
+            jobQueue: jobQueue,
+            failedJobsInitialization: failedJobsInitialization,
+            processingJobsInitialization: processingJobsInitialization,
+            revertMigrations: revertMigrations,
+            test: test
+        )
     }
 
     func testBasic() async throws {
@@ -368,14 +379,13 @@ final class JobsTests: XCTestCase {
             finished.store(true, ordering: .relaxed)
         }
         let jobQueue = try await createJobQueue(
-            numWorkers: 1,
-            configuration: .init(pendingJobsInitialization: .remove, failedJobsInitialization: .rerun)
+            numWorkers: 1
         )
         jobQueue.registerJob(job)
-        try await self.testJobQueue(jobQueue: jobQueue, revertMigrations: true) { jobQueue in
-            // stall to give onInit a chance to run, so it can remove any pendng jobs
-            try await Task.sleep(for: .milliseconds(100))
-
+        try await self.testJobQueue(
+            jobQueue: jobQueue,
+            revertMigrations: true
+        ) { jobQueue in
             try await jobQueue.push(id: jobIdentifer, parameters: 0)
 
             await self.wait(for: [failedExpectation], timeout: 10)
@@ -384,9 +394,9 @@ final class JobsTests: XCTestCase {
             XCTAssertFalse(finished.load(ordering: .relaxed))
         }
 
-        let jobQueue2 = try await createJobQueue(numWorkers: 1, configuration: .init(failedJobsInitialization: .rerun))
+        let jobQueue2 = try await createJobQueue(numWorkers: 1)
         jobQueue2.registerJob(job)
-        try await self.testJobQueue(jobQueue: jobQueue2) { _ in
+        try await self.testJobQueue(jobQueue: jobQueue2, failedJobsInitialization: .rerun) { _ in
             await self.wait(for: [succeededExpectation], timeout: 10)
             XCTAssertTrue(finished.load(ordering: .relaxed))
         }
@@ -414,7 +424,6 @@ final class JobsTests: XCTestCase {
             .postgres(
                 client: postgresClient,
                 migrations: postgresMigrations,
-                configuration: .init(failedJobsInitialization: .remove, processingJobsInitialization: .remove),
                 logger: logger
             ),
             numWorkers: 2,
@@ -425,7 +434,6 @@ final class JobsTests: XCTestCase {
             .postgres(
                 client: postgresClient,
                 migrations: postgresMigrations2,
-                configuration: .init(failedJobsInitialization: .remove, processingJobsInitialization: .remove),
                 logger: logger
             ),
             numWorkers: 2,
@@ -447,6 +455,8 @@ final class JobsTests: XCTestCase {
             }
             try await postgresMigrations.apply(client: postgresClient, groups: [.jobQueue], logger: logger, dryRun: false)
             try await postgresMigrations2.apply(client: postgresClient, groups: [.jobQueue], logger: logger, dryRun: false)
+            try await jobQueue.queue.cleanup(failedJobs: .remove, processingJobs: .remove)
+            try await jobQueue2.queue.cleanup(failedJobs: .remove, processingJobs: .remove)
             do {
                 for i in 0..<200 {
                     try await jobQueue.push(id: jobIdentifer, parameters: i)
@@ -475,7 +485,6 @@ final class JobsTests: XCTestCase {
             let jobQueue = await PostgresJobQueue(
                 client: postgresClient,
                 migrations: postgresMigrations,
-                configuration: .init(failedJobsInitialization: .remove, processingJobsInitialization: .remove),
                 logger: logger
             )
             try await postgresMigrations.apply(client: postgresClient, groups: [.jobQueue], logger: logger, dryRun: false)

@@ -73,20 +73,11 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     /// Queue configuration
     public struct Configuration: Sendable {
-        let pendingJobsInitialization: JobInitialization
-        let failedJobsInitialization: JobInitialization
-        let processingJobsInitialization: JobInitialization
         let pollTime: Duration
 
         public init(
-            pendingJobsInitialization: JobInitialization = .doNothing,
-            failedJobsInitialization: JobInitialization = .rerun,
-            processingJobsInitialization: JobInitialization = .rerun,
             pollTime: Duration = .milliseconds(100)
         ) {
-            self.pendingJobsInitialization = pendingJobsInitialization
-            self.failedJobsInitialization = failedJobsInitialization
-            self.processingJobsInitialization = processingJobsInitialization
             self.pollTime = pollTime
         }
     }
@@ -115,20 +106,29 @@ public final class PostgresJobQueue: JobQueueDriver {
         await migrations.add(UpdateJobDelay())
     }
 
-    /// Run on initialization of the job queue
-    public func onInit() async throws {
+    ///  Cleanup job queues
+    /// - Parameters:
+    ///   - failedJobs: What to do with jobs tagged as failed
+    ///   - processingJobs: What to do with jobs tagged as processing
+    ///   - pendingJobs: What to do with jobs tagged as pending
+    /// - Throws:
+    public func cleanup(
+        failedJobs: JobInitialization = .doNothing,
+        processingJobs: JobInitialization = .doNothing,
+        pendingJobs: JobInitialization = .doNothing
+    ) async throws {
         do {
             self.logger.info("Waiting for JobQueue migrations")
             try await self.migrations.waitUntilCompleted()
             _ = try await self.client.withConnection { connection in
-                self.logger.info("Update Jobs at initialization")
-                try await self.updateJobsOnInit(withStatus: .pending, onInit: self.configuration.pendingJobsInitialization, connection: connection)
+                self.logger.info("Update Jobs")
+                try await self.updateJobsOnInit(withStatus: .pending, onInit: pendingJobs, connection: connection)
                 try await self.updateJobsOnInit(
                     withStatus: .processing,
-                    onInit: self.configuration.processingJobsInitialization,
+                    onInit: processingJobs,
                     connection: connection
                 )
-                try await self.updateJobsOnInit(withStatus: .failed, onInit: self.configuration.failedJobsInitialization, connection: connection)
+                try await self.updateJobsOnInit(withStatus: .failed, onInit: failedJobs, connection: connection)
             }
         } catch let error as PSQLError {
             logger.error(
