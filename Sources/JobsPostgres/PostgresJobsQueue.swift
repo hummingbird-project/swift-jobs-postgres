@@ -46,7 +46,7 @@ public final class PostgresJobQueue: JobQueueDriver {
     public typealias JobID = UUID
 
     /// what to do with failed/processing jobs from last time queue was handled
-    public enum JobInitialization: Sendable {
+    public enum JobCleanup: Sendable {
         case doNothing
         case rerun
         case remove
@@ -73,8 +73,11 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     /// Queue configuration
     public struct Configuration: Sendable {
+        /// Queue poll time to wait if queue empties
         let pollTime: Duration
 
+        ///  Initialize configuration
+        /// - Parameter pollTime: Queue poll time to wait if queue empties
         public init(
             pollTime: Duration = .milliseconds(100)
         ) {
@@ -107,15 +110,27 @@ public final class PostgresJobQueue: JobQueueDriver {
     }
 
     ///  Cleanup job queues
+    ///
+    /// This function is used to re-run or delete jobs in a certain state. Failed jobs can be
+    /// pushed back into the pending queue to be re-run or removed. When called at startup in
+    /// theory no job should be set to processing, or set to pending but not in the queue. but if
+    /// your job server crashes these states are possible, so we also provide options to re-queue
+    /// these jobs so they are run again.
+    ///
+    /// The job queue needs to be running when you call cleanup. You can call `cleanup` with
+    /// `failedJobs`` set to whatever you like at any point to re-queue failed jobs. Moving processing
+    /// or pending jobs should only be done if you are certain there is nothing else processing
+    /// the job queue.
+    ///
     /// - Parameters:
     ///   - failedJobs: What to do with jobs tagged as failed
     ///   - processingJobs: What to do with jobs tagged as processing
     ///   - pendingJobs: What to do with jobs tagged as pending
     /// - Throws:
     public func cleanup(
-        failedJobs: JobInitialization = .doNothing,
-        processingJobs: JobInitialization = .doNothing,
-        pendingJobs: JobInitialization = .doNothing
+        failedJobs: JobCleanup = .doNothing,
+        processingJobs: JobCleanup = .doNothing,
+        pendingJobs: JobCleanup = .doNothing
     ) async throws {
         do {
             self.logger.info("Waiting for JobQueue migrations")
@@ -315,7 +330,7 @@ public final class PostgresJobQueue: JobQueueDriver {
         return jobs
     }
 
-    func updateJobsOnInit(withStatus status: Status, onInit: JobInitialization, connection: PostgresConnection) async throws {
+    func updateJobsOnInit(withStatus status: Status, onInit: JobCleanup, connection: PostgresConnection) async throws {
         switch onInit {
         case .remove:
             try await connection.query(

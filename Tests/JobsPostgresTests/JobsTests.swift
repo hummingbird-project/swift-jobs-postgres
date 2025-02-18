@@ -87,9 +87,9 @@ final class JobsTests: XCTestCase {
     /// shutdown correctly
     @discardableResult public func testJobQueue<T>(
         jobQueue: JobQueue<PostgresJobQueue>,
-        failedJobsInitialization: PostgresJobQueue.JobInitialization = .remove,
-        processingJobsInitialization: PostgresJobQueue.JobInitialization = .remove,
-        pendingJobsInitialization: PostgresJobQueue.JobInitialization = .doNothing,
+        failedJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
+        processingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
+        pendingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         revertMigrations: Bool = false,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
     ) async throws -> T {
@@ -138,8 +138,9 @@ final class JobsTests: XCTestCase {
     /// shutdown correctly
     @discardableResult public func testJobQueue<T>(
         numWorkers: Int,
-        failedJobsInitialization: PostgresJobQueue.JobInitialization = .remove,
-        processingJobsInitialization: PostgresJobQueue.JobInitialization = .remove,
+        failedJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
+        processingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
+        pendingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         revertMigrations: Bool = true,
         function: String = #function,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
@@ -149,6 +150,7 @@ final class JobsTests: XCTestCase {
             jobQueue: jobQueue,
             failedJobsInitialization: failedJobsInitialization,
             processingJobsInitialization: processingJobsInitialization,
+            pendingJobsInitialization: pendingJobsInitialization,
             revertMigrations: revertMigrations,
             test: test
         )
