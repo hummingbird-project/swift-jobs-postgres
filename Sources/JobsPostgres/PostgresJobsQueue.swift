@@ -109,6 +109,12 @@ public final class PostgresJobQueue: JobQueueDriver {
         await migrations.add(UpdateJobDelay())
     }
 
+    public func onInit() async throws {
+        self.logger.info("Waiting for JobQueue migrations")
+        /// Need migrations to have completed before job queue processing can start
+        try await self.migrations.waitUntilCompleted()
+    }
+
     ///  Cleanup job queues
     ///
     /// This function is used to re-run or delete jobs in a certain state. Failed jobs can be
@@ -133,7 +139,7 @@ public final class PostgresJobQueue: JobQueueDriver {
         pendingJobs: JobCleanup = .doNothing
     ) async throws {
         do {
-            self.logger.info("Waiting for JobQueue migrations")
+            /// wait for migrations to complete before running job queue cleanup
             try await self.migrations.waitUntilCompleted()
             _ = try await self.client.withConnection { connection in
                 self.logger.info("Update Jobs")
