@@ -24,6 +24,7 @@ jobs:
           - 'swift:5.10'
           - 'swift:6.0'
         postgres-image:
+          - 'postgres:17'
           - 'postgres:16'
           - 'postgres:14'
         include:
