@@ -1,10 +1,3 @@
-//
-//  UpdateJobDelay.swift
-//  swift-jobs-postgres
-//
-//  Created by Stevenson Michel on 2/17/25.
-//
-
 //===----------------------------------------------------------------------===//
 //
 // This source file is part of the Hummingbird server framework project
