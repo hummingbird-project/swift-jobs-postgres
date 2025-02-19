@@ -267,11 +267,17 @@ public final class PostgresJobQueue: JobQueueDriver {
                     )
 
                     do {
-                        try await self.setStatus(jobID: jobID, status: .processing, connection: connection)
-                        // if failed to find a job in the job table try getting another index
                         guard let buffer = try await stream2.decode(ByteBuffer.self, context: .default).first(where: { _ in true }) else {
+                            logger.error(
+                                "Failed to job with id",
+                                metadata: [
+                                    "JobID": "\(jobID)"
+                                ]
+                            )
+                            // if failed to find a job in the job table try getting another index
                             continue
                         }
+                        try await self.setStatus(jobID: jobID, status: .processing, connection: connection)
                         do {
                             let jobInstance = try self.jobRegistry.decode(buffer)
                             return Result.success(.init(id: jobID, result: .success(jobInstance)))
