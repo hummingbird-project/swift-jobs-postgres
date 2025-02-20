@@ -234,6 +234,8 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     func popFirst() async throws -> JobQueueResult<JobID>? {
         do {
+            // The withTransaction closure returns a Result<JobQueueResult<JobID>?, Error> because
+            // we want to be able to exit the closure without cancelling the transaction
             let result = try await self.client.withTransaction(logger: self.logger) { connection -> Result<JobQueueResult<JobID>?, Error> in
                 while true {
                     try Task.checkCancellation()
@@ -269,7 +271,7 @@ public final class PostgresJobQueue: JobQueueDriver {
                     do {
                         guard let buffer = try await stream2.decode(ByteBuffer.self, context: .default).first(where: { _ in true }) else {
                             logger.error(
-                                "Failed to job with id",
+                                "Failed to find job with id",
                                 metadata: [
                                     "JobID": "\(jobID)"
                                 ]
@@ -283,10 +285,6 @@ public final class PostgresJobQueue: JobQueueDriver {
                             return Result.success(.init(id: jobID, result: .success(jobInstance)))
                         } catch let error as JobQueueError {
                             return Result.success(.init(id: jobID, result: .failure(error)))
-                        } catch {
-                            return Result.success(
-                                .init(id: jobID, result: .failure(JobQueueError(code: .unrecognised, jobName: nil, details: "\(error)")))
-                            )
                         }
                     } catch {
                         try await self.setStatus(jobID: jobID, status: .failed, connection: connection)
