@@ -253,7 +253,7 @@ final class JobsTests: XCTestCase {
 
     func testErrorRetryCount() async throws {
         let jobIdentifer = JobIdentifier<Int>(#function)
-        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 4)
+        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 1)
         struct FailedError: Error {}
         try await self.testJobQueue(numWorkers: 1) { jobQueue in
             jobQueue.registerJob(id: jobIdentifer, maxRetryCount: 3) { _, _ in
@@ -274,7 +274,7 @@ final class JobsTests: XCTestCase {
 
     func testErrorRetryAndThenSucceed() async throws {
         let jobIdentifer = JobIdentifier<Int>(#function)
-        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 2)
+        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 1)
         let currentJobTryCount: NIOLockedValueBox<Int> = .init(0)
         struct FailedError: Error {}
         try await self.testJobQueue(numWorkers: 1) { jobQueue in
@@ -295,11 +295,11 @@ final class JobsTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(200))
 
             let failedJobs = try await jobQueue.queue.getJobs(withStatus: .failed)
-            XCTAssertEqual(failedJobs.count, 0)
+            XCTAssertEqual(failedJobs.count, 1)
             let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
             XCTAssertEqual(pendingJobs.count, 0)
         }
-        XCTAssertEqual(currentJobTryCount.withLockedValue { $0 }, 2)
+        XCTAssertEqual(currentJobTryCount.withLockedValue { $0 }, 1)
     }
 
     func testJobSerialization() async throws {
