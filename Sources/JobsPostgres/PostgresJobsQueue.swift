@@ -234,71 +234,61 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     func popFirst() async throws -> JobQueueResult<JobID>? {
         do {
-            // The withTransaction closure returns a Result<JobQueueResult<JobID>?, Error> because
+            // The withTransaction closure returns a Result<(ByteBuffer, JobID)?, Error> because
             // we want to be able to exit the closure without cancelling the transaction
-            let result = try await self.client.withTransaction(logger: self.logger) { connection -> Result<JobQueueResult<JobID>?, Error> in
-                while true {
-                    try Task.checkCancellation()
+            let result = try await self.client.withTransaction(logger: self.logger) { connection -> Result<(ByteBuffer, JobID)?, Error> in
+                try Task.checkCancellation()
 
-                    let stream = try await connection.query(
-                        """
-                        WITH next_job AS (
-                            SELECT
-                                job_id
-                            FROM _hb_pg_job_queue
-                            WHERE delayed_until <= NOW()
-                            ORDER BY createdAt, delayed_until ASC
-                            FOR UPDATE SKIP LOCKED
-                            LIMIT 1
-                        )
-                        DELETE FROM
-                            _hb_pg_job_queue
-                        WHERE job_id = (SELECT job_id FROM next_job)
-                        RETURNING job_id
-                        """,
-                        logger: self.logger
+                let stream = try await connection.query(
+                    """
+                    WITH next_job AS (
+                        SELECT
+                            job_id
+                        FROM _hb_pg_job_queue
+                        WHERE delayed_until <= NOW()
+                        ORDER BY createdAt, delayed_until ASC
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
                     )
-                    // return nil if nothing in queue
-                    guard let jobID = try await stream.decode(UUID.self, context: .default).first(where: { _ in true }) else {
-                        return Result.success(nil)
-                    }
-                    // select job from job table
-                    let stream2 = try await connection.query(
-                        "SELECT job FROM _hb_pg_jobs WHERE id = \(jobID)",
-                        logger: self.logger
-                    )
-
-                    do {
-                        guard let buffer = try await stream2.decode(ByteBuffer.self, context: .default).first(where: { _ in true }) else {
-                            logger.error(
-                                "Failed to find job with id",
-                                metadata: [
-                                    "JobID": "\(jobID)"
-                                ]
-                            )
-                            // if failed to find a job in the job table try getting another index
-                            continue
-                        }
-                        try await self.setStatus(jobID: jobID, status: .processing, connection: connection)
-                        do {
-                            let jobInstance = try self.jobRegistry.decode(buffer)
-                            return Result.success(.init(id: jobID, result: .success(jobInstance)))
-                        } catch let error as JobQueueError {
-                            return Result.success(.init(id: jobID, result: .failure(error)))
-                        }
-                    } catch {
-                        try await self.setStatus(jobID: jobID, status: .failed, connection: connection)
-                        return Result.failure(
-                            JobQueueError(
-                                code: .decodeJobFailed,
-                                jobName: nil,
-                                details: "\(String(reflecting: error))"
-                            )
-                        )
-                    }
+                    DELETE FROM
+                        _hb_pg_job_queue
+                    WHERE job_id = (SELECT job_id FROM next_job)
+                    RETURNING job_id
+                    """,
+                    logger: self.logger
+                )
+                // return nil if nothing in queue
+                guard let jobID = try await stream.decode(UUID.self, context: .default).first(where: { _ in true }) else {
+                    return Result.success(nil)
                 }
+                // set job status to processing
+                try await self.setStatus(jobID: jobID, status: .processing, connection: connection)
+
+                // select job from job table
+                let stream2 = try await connection.query(
+                    "SELECT job FROM _hb_pg_jobs WHERE id = \(jobID)",
+                    logger: self.logger
+                )
+                guard let buffer = try await stream2.decode(ByteBuffer.self, context: .default).first(where: { _ in true }) else {
+                    logger.error(
+                        "Failed to find job with id",
+                        metadata: [
+                            "JobID": "\(jobID)"
+                        ]
+                    )
+                    // if failed to find the job in the job table return nil
+                    return .success(nil)
+                }
+                return .success((buffer, jobID))
+
             }
-            return try result.get()
+            guard let (buffer, jobID) = try result.get() else { return nil }
+            do {
+                let jobInstance = try self.jobRegistry.decode(buffer)
+                return JobQueueResult(id: jobID, result: .success(jobInstance))
+            } catch let error as JobQueueError {
+                return JobQueueResult(id: jobID, result: .failure(error))
+            }
         } catch let error as PSQLError {
             logger.error(
                 "Failed to get job from queue",
