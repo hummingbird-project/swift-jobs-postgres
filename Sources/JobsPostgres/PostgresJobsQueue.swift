@@ -173,9 +173,11 @@ public final class PostgresJobQueue: JobQueueDriver {
         }
     }
 
-    @discardableResult public func update(_ id: JobID, buffer: ByteBuffer, options: JobOptions) async throws -> Bool {
+    /// Retry a job
+    /// - Returns: Bool
+    @discardableResult public func retry(_ id: JobID, buffer: ByteBuffer, options: JobOptions) async throws -> Bool {
         try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.update(id: id, buffer: buffer, connection: connection)
+            try await self.updateJob(id: id, buffer: buffer, connection: connection)
             try await self.updateQueue(jobId: id, connection: connection, delayUntil: options.delayUntil)
         }
         return true
@@ -303,8 +305,8 @@ public final class PostgresJobQueue: JobQueueDriver {
             logger: self.logger
         )
     }
-    /// TODO maybe add a new column colum for attempt so far after PR https://github.com/hummingbird-project/swift-jobs/pull/63 is merged?
-    func update(id: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
+    // TODO: maybe add a new column colum for attempt so far after PR https://github.com/hummingbird-project/swift-jobs/pull/63 is merged?
+    func updateJob(id: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
         try await connection.query(
             """
             UPDATE _hb_pg_jobs
