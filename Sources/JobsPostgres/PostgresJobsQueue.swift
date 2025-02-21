@@ -275,7 +275,7 @@ public final class PostgresJobQueue: JobQueueDriver {
                     logger: self.logger
                 )
                 guard let row = try await stream2.first(where: { _ in true }) else {
-                    logger.error(
+                    logger.info(
                         "Failed to find job with id",
                         metadata: [
                             "JobID": "\(jobID)"
@@ -300,7 +300,7 @@ public final class PostgresJobQueue: JobQueueDriver {
                 }
             }
         } catch let error as PSQLError {
-            logger.error(
+            logger.info(
                 "Failed to get job from queue",
                 metadata: [
                     "error": "\(String(reflecting: error))"
@@ -308,7 +308,7 @@ public final class PostgresJobQueue: JobQueueDriver {
             )
             throw error
         } catch let error as JobQueueError {
-            logger.error(
+            logger.info(
                 "Job failed",
                 metadata: [
                     "error": "\(String(reflecting: error))"
