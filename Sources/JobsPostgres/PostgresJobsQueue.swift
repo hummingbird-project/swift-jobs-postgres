@@ -173,6 +173,16 @@ public final class PostgresJobQueue: JobQueueDriver {
         }
     }
 
+    /// Retry a job
+    /// - Returns: Bool
+    @discardableResult public func retry(_ id: JobID, buffer: ByteBuffer, options: JobOptions) async throws -> Bool {
+        try await self.client.withTransaction(logger: self.logger) { connection in
+            try await self.updateJob(id: id, buffer: buffer, connection: connection)
+            try await self.addToQueue(jobId: id, connection: connection, delayUntil: options.delayUntil)
+        }
+        return true
+    }
+
     /// This is called to say job has finished processing and it can be deleted
     public func finished(jobId: JobID) async throws {
         try await self.delete(jobId: jobId)
@@ -295,6 +305,19 @@ public final class PostgresJobQueue: JobQueueDriver {
             logger: self.logger
         )
     }
+    // TODO: maybe add a new column colum for attempt so far after PR https://github.com/hummingbird-project/swift-jobs/pull/63 is merged?
+    func updateJob(id: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
+        try await connection.query(
+            """
+            UPDATE _hb_pg_jobs
+            SET job = \(buffer),
+                lastModified = \(Date.now),
+                status = \(Status.failed)
+            WHERE id = \(id)
+            """,
+            logger: self.logger
+        )
+    }
 
     func delete(jobId: JobID) async throws {
         try await self.client.query(
@@ -304,7 +327,6 @@ public final class PostgresJobQueue: JobQueueDriver {
     }
 
     func addToQueue(jobId: JobID, connection: PostgresConnection, delayUntil: Date) async throws {
-        // TODO: assign Date.now in swift-jobs options?
         try await connection.query(
             """
             INSERT INTO _hb_pg_job_queue (job_id, createdAt, delayed_until)
