@@ -178,7 +178,7 @@ public final class PostgresJobQueue: JobQueueDriver {
     @discardableResult public func retry(_ id: JobID, buffer: ByteBuffer, options: JobOptions) async throws -> Bool {
         try await self.client.withTransaction(logger: self.logger) { connection in
             try await self.updateJob(id: id, buffer: buffer, connection: connection)
-            try await self.updateQueue(jobId: id, connection: connection, delayUntil: options.delayUntil)
+            try await self.addToQueue(jobId: id, connection: connection, delayUntil: options.delayUntil)
         }
         return true
     }
@@ -333,17 +333,6 @@ public final class PostgresJobQueue: JobQueueDriver {
             VALUES (\(jobId), \(Date.now), \(delayUntil))
             -- We have found an existing job with the same id, SKIP this INSERT 
             ON CONFLICT (job_id) DO NOTHING
-            """,
-            logger: self.logger
-        )
-    }
-
-    func updateQueue(jobId: JobID, connection: PostgresConnection, delayUntil: Date) async throws {
-        try await connection.query(
-            """
-            UPDATE _hb_pg_job_queue
-            SET delayed_until = \(delayUntil)
-            WHERE job_id = \(jobId)
             """,
             logger: self.logger
         )
