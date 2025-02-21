@@ -184,12 +184,12 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     /// Retry a job
     /// - Returns: Bool
-    @discardableResult public func retry(_ id: JobID, buffer: ByteBuffer, options: JobOptions) async throws -> Bool {
+    public func retry<Parameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobOptions) async throws {
+        let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
             try await self.updateJob(id: id, buffer: buffer, connection: connection)
-            try await self.addToQueue(jobId: id, connection: connection, delayUntil: options.delayUntil)
+            try await self.addToQueue(jobID: id, connection: connection, delayUntil: options.delayUntil)
         }
-        return true
     }
 
     /// This is called to say job has finished processing and it can be deleted
