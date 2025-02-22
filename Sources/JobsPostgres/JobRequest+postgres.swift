@@ -15,7 +15,7 @@
 import Jobs
 import PostgresNIO
 
-extension JobRequest: @retroactive PostgresEncodable where Parameters: Encodable {
+extension JobRequest {
     public static var psqlType: PostgresDataType {
         .bytea
     }
@@ -31,3 +31,9 @@ extension JobRequest: @retroactive PostgresEncodable where Parameters: Encodable
         try context.jsonEncoder.encode(self, into: &byteBuffer)
     }
 }
+
+#if hasAttribute(retroactive)
+extension JobRequest: @retroactive PostgresEncodable where Parameters: Encodable {}
+#else
+extension JobRequest: PostgresEncodable where Parameters: Encodable {}
+#endif

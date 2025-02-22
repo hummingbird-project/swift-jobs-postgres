@@ -15,7 +15,7 @@
 import Jobs
 import PostgresNIO
 
-extension AnyDecodableJob: @retroactive PostgresDecodable {
+extension AnyDecodableJob {
     public static var psqlType: PostgresDataType {
         .bytea
     }
@@ -37,3 +37,9 @@ extension AnyDecodableJob: @retroactive PostgresDecodable {
         }
     }
 }
+
+#if hasAttribute(retroactive)
+extension AnyDecodableJob: @retroactive PostgresDecodable {}
+#else
+extension AnyDecodableJob: PostgresDecodable {}
+#endif
