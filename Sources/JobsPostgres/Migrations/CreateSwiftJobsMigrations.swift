@@ -45,7 +45,7 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
             """,
             logger: logger
         )
-        
+
         try await connection.query(
             """
             CREATE INDEX CONCURRENTLY IF NOT EXISTS queues_delayed_until_queue_name_idx 
@@ -64,7 +64,7 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
             """,
             logger: logger
         )
-        
+
         try await connection.query(
             """
             CREATE INDEX CONCURRENTLY IF NOT EXISTS queues_metadata_key_queue_name_idx
