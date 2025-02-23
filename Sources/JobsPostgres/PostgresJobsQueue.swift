@@ -44,9 +44,6 @@ import PostgresNIO
 /// ```
 public final class PostgresJobQueue: JobQueueDriver {
     public typealias JobID = UUID
-    /// Queue to push jobs into
-    public let queueName: String
-
     /// what to do with failed/processing jobs from last time queue was handled
     public enum JobCleanup: Sendable {
         case doNothing
@@ -109,7 +106,6 @@ public final class PostgresJobQueue: JobQueueDriver {
         self.logger = logger
         self.isStopped = .init(false)
         self.migrations = migrations
-        self.queueName = configuration.queueName
         await migrations.add(CreateSwiftJobsMigrations())
     }
 
