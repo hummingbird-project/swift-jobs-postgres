@@ -436,6 +436,9 @@ final class JobsTests: XCTestCase {
             .postgres(
                 client: postgresClient,
                 migrations: postgresMigrations2,
+                configuration: .init(
+                    queueName: "job_queue_2"
+                ),
                 logger: logger
             ),
             numWorkers: 2,
@@ -460,7 +463,8 @@ final class JobsTests: XCTestCase {
             try await jobQueue.queue.cleanup(failedJobs: .remove, processingJobs: .remove)
             try await jobQueue2.queue.cleanup(failedJobs: .remove, processingJobs: .remove)
             do {
-                for i in 0..<200 {
+                for i in 0..<100 {
+                    try await jobQueue2.push(id: jobIdentifer, parameters: i)
                     try await jobQueue.push(id: jobIdentifer, parameters: i)
                 }
                 await self.wait(for: [expectation], timeout: 5)

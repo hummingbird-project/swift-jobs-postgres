@@ -155,7 +155,7 @@ public final class PostgresJobQueue: JobQueueDriver {
             logger.error(
                 "JobQueue initialization failed",
                 metadata: [
-                    "error": "\(String(reflecting: error))"
+                    "Error": "\(String(reflecting: error))"
                 ]
             )
             throw error
@@ -271,14 +271,20 @@ public final class PostgresJobQueue: JobQueueDriver {
 
                 // select job from job table
                 let stream2 = try await connection.query(
-                    "SELECT job FROM swift_jobs.jobs WHERE id = \(jobID)",
+                    """
+                    SELECT
+                        job
+                    FROM swift_jobs.jobs
+                    WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
+                    """,
                     logger: self.logger
                 )
                 guard let row = try await stream2.first(where: { _ in true }) else {
                     logger.info(
                         "Failed to find job with id",
                         metadata: [
-                            "JobID": "\(jobID)"
+                            "JobID": "\(jobID)",
+                            "Queue": "\(configuration.queueName)",
                         ]
                     )
                     // if failed to find the job in the job table return error
@@ -303,7 +309,8 @@ public final class PostgresJobQueue: JobQueueDriver {
             logger.info(
                 "Failed to get job from queue",
                 metadata: [
-                    "error": "\(String(reflecting: error))"
+                    "Error": "\(String(reflecting: error))",
+                    "Queue": "\(configuration.queueName)",
                 ]
             )
             throw error
@@ -311,7 +318,8 @@ public final class PostgresJobQueue: JobQueueDriver {
             logger.info(
                 "Job failed",
                 metadata: [
-                    "error": "\(String(reflecting: error))"
+                    "Error": "\(String(reflecting: error))",
+                    "Queue": "\(configuration.queueName)",
                 ]
             )
             throw error
@@ -335,7 +343,7 @@ public final class PostgresJobQueue: JobQueueDriver {
             SET job = \(buffer),
                 last_modified = \(Date.now),
                 status = \(Status.failed)
-            WHERE id = \(id)
+            WHERE id = \(id) AND queue_name = \(configuration.queueName)
             """,
             logger: self.logger
         )
@@ -343,7 +351,10 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     func delete(jobID: JobID) async throws {
         try await self.client.query(
-            "DELETE FROM swift_jobs.jobs WHERE id = \(jobID)",
+            """
+            DELETE FROM swift_jobs.jobs
+            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
+            """,
             logger: self.logger
         )
     }
@@ -362,21 +373,37 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     func setStatus(jobID: JobID, status: Status, connection: PostgresConnection) async throws {
         try await connection.query(
-            "UPDATE swift_jobs.jobs SET status = \(status), last_modified = \(Date.now) WHERE id = \(jobID)",
+            """
+            UPDATE swift_jobs.jobs
+            SET status = \(status),
+                last_modified = \(Date.now)
+            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
+            """,
             logger: self.logger
         )
     }
 
     func setStatus(jobID: JobID, status: Status) async throws {
         try await self.client.query(
-            "UPDATE swift_jobs.jobs SET status = \(status), last_modified = \(Date.now) WHERE id = \(jobID)",
+            """
+            UPDATE swift_jobs.jobs
+            SET status = \(status),
+                last_modified = \(Date.now)
+            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
+            """,
             logger: self.logger
         )
     }
 
     func getJobs(withStatus status: Status) async throws -> [(id: JobID, queue: String)] {
         let stream = try await self.client.query(
-            "SELECT id FROM swift_jobs.jobs WHERE status = \(status) AND queue_name = \(configuration.queueName)",
+            """
+            SELECT
+                id,
+                queue_name
+            FROM swift_jobs.jobs
+            WHERE status = \(status) AND queue_name = \(configuration.queueName)
+            """,
             logger: self.logger
         )
         var jobs: [(id: JobID, queue: String)] = []
@@ -390,7 +417,10 @@ public final class PostgresJobQueue: JobQueueDriver {
         switch onInit {
         case .remove:
             try await connection.query(
-                "DELETE FROM swift_jobs.jobs WHERE status = \(status) ",
+                """
+                DELETE FROM swift_jobs.jobs
+                WHERE status = \(status) AND queue_name = \(configuration.queueName)
+                """,
                 logger: self.logger
             )
 
