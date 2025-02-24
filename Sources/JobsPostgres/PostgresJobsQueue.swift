@@ -376,7 +376,7 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     func getJobs(withStatus status: Status) async throws -> [(id: JobID, queue: String)] {
         let stream = try await self.client.query(
-            "SELECT id, queue_name FROM swift_jobs.jobs WHERE status = \(status)",
+            "SELECT id FROM swift_jobs.jobs WHERE status = \(status) AND queue_name = \(configuration.queueName)",
             logger: self.logger
         )
         var jobs: [(id: JobID, queue: String)] = []
