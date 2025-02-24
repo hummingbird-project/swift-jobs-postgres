@@ -25,10 +25,11 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
         try await connection.query(
             """
             CREATE TABLE IF NOT EXISTS swift_jobs.jobs (
-               id uuid PRIMARY KEY,
-               job bytea NOT NULL,
-               status smallint NOT NULL,
-               last_modified TIMESTAMPTZ NOT NULL DEFAULT now() 
+                id uuid PRIMARY KEY,
+                job bytea NOT NULL,
+                last_modified TIMESTAMPTZ NOT NULL DEFAULT now(),
+                queue_name TEXT NOT NULL DEFAULT 'default',
+                status smallint NOT NULL
             );
             """,
             logger: logger
