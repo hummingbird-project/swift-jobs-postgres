@@ -165,13 +165,13 @@ public final class PostgresJobQueue: JobQueueDriver {
     ///  Register job
     /// - Parameters:
     ///   - job: Job Definition
-    public func registerJob<Parameters: Codable & Sendable>(_ job: JobDefinition<Parameters>) {
+    public func registerJob<Parameters: JobParameters>(_ job: JobDefinition<Parameters>) {
         self.jobRegistry.registerJob(job)
     }
 
     /// Push Job onto queue
     /// - Returns: Identifier of queued job
-    @discardableResult public func push<Parameters>(_ jobRequest: JobRequest<Parameters>, options: JobOptions) async throws -> JobID {
+    @discardableResult public func push<Parameters: JobParameters>(_ jobRequest: JobRequest<Parameters>, options: JobOptions) async throws -> JobID {
         let jobID = JobID()
         try await self.client.withTransaction(logger: self.logger) { connection in
             try await self.add(jobID: jobID, jobRequest: jobRequest, queueName: configuration.queueName, connection: connection)
@@ -182,7 +182,7 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     /// Retry a job
     /// - Returns: Bool
-    public func retry<Parameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobOptions) async throws {
+    public func retry<Parameters: JobParameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobOptions) async throws {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
             try await self.updateJob(id: id, buffer: buffer, connection: connection)
