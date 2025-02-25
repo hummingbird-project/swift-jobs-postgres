@@ -395,20 +395,19 @@ public final class PostgresJobQueue: JobQueueDriver {
         )
     }
 
-    func getJobs(withStatus status: Status) async throws -> [(id: JobID, queue: String)] {
+    func getJobs(withStatus status: Status) async throws -> [JobID] {
         let stream = try await self.client.query(
             """
             SELECT
-                id,
-                queue_name
+                id
             FROM swift_jobs.jobs
             WHERE status = \(status) AND queue_name = \(configuration.queueName)
             """,
             logger: self.logger
         )
-        var jobs: [(id: JobID, queue: String)] = []
-        for try await (id, queue) in stream.decode((JobID, String).self, context: .default) {
-            jobs.append((id: id, queue: queue))
+        var jobs: [JobID] = []
+        for try await id in stream.decode(JobID.self, context: .default) {
+            jobs.append(id)
         }
         return jobs
     }
@@ -427,8 +426,8 @@ public final class PostgresJobQueue: JobQueueDriver {
         case .rerun:
             let jobs = try await getJobs(withStatus: status)
             self.logger.info("Moving \(jobs.count) jobs with status: \(status) to job queue")
-            for job in jobs {
-                try await self.addToQueue(jobID: job.id, queueName: job.queue, delayUntil: Date.now, connection: connection)
+            for jobID in jobs {
+                try await self.addToQueue(jobID: jobID, queueName: configuration.queueName, delayUntil: Date.now, connection: connection)
             }
 
         case .doNothing:
