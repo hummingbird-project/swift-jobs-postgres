@@ -78,7 +78,9 @@ public final class PostgresJobQueue: JobQueueDriver {
         let queueName: String
 
         ///  Initialize configuration
-        /// - Parameter pollTime: Queue poll time to wait if queue empties
+        /// - Parameters
+        ///   - pollTime: Queue poll time to wait if queue empties
+        ///   - queueName: Name of queue we are handing
         public init(
             pollTime: Duration = .milliseconds(100),
             queueName: String = "default"
