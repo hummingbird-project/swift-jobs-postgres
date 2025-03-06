@@ -51,6 +51,23 @@ public final class PostgresJobQueue: JobQueueDriver {
         case remove
     }
 
+    /// Options for job pushed to queue
+    public struct JobOptions: JobOptionsProtocol {
+        /// Delay running job until
+        public var delayUntil: Date
+
+        /// Default initializer for JobOptions
+        public init() {
+            self.delayUntil = .now
+        }
+
+        ///  Initializer for JobOptions
+        /// - Parameter delayUntil: Whether job execution should be delayed until a later date
+        public init(delayUntil: Date?) {
+            self.delayUntil = delayUntil ?? .now
+        }
+    }
+
     /// Errors thrown by PostgresJobQueue
     public enum PostgresQueueError: Error, CustomStringConvertible {
         case failedToAdd
@@ -186,8 +203,8 @@ public final class PostgresJobQueue: JobQueueDriver {
     /// - Parameters
     ///   - id: Job instance ID
     ///   - jobRequest: Job Request
-    ///   - options: JobOptions
-    public func retry<Parameters: JobParameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobOptions) async throws {
+    ///   - options: Job retry options
+    public func retry<Parameters: JobParameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
             try await self.updateJob(id: id, buffer: buffer, connection: connection)
