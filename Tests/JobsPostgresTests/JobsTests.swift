@@ -65,7 +65,7 @@ final class JobsTests: XCTestCase {
             ),
             numWorkers: numWorkers,
             logger: logger,
-            options: .init(defaultRetryStrategy: .exponentialJitter(maxBackoff: 0.01, maxJitter: 0.01))
+            options: .init(defaultRetryStrategy: .exponentialJitter(maxBackoff: .milliseconds(10)))
         )
     }
 
@@ -255,7 +255,7 @@ final class JobsTests: XCTestCase {
         try await self.testJobQueue(numWorkers: 1) { jobQueue in
             jobQueue.registerJob(
                 parameters: TestParameters.self,
-                retryStrategy: .exponentialJitter(maxAttempts: 3, maxBackoff: 0.01, maxJitter: 0.01)
+                retryStrategy: .exponentialJitter(maxAttempts: 3, maxBackoff: .milliseconds(10))
             ) { _, _ in
                 expectation.fulfill()
                 throw FailedError()
@@ -282,7 +282,7 @@ final class JobsTests: XCTestCase {
         try await self.testJobQueue(numWorkers: 1) { jobQueue in
             jobQueue.registerJob(
                 parameters: TestParameters.self,
-                retryStrategy: .exponentialJitter(maxAttempts: 3, maxBackoff: 0.01, maxJitter: 0.01)
+                retryStrategy: .exponentialJitter(maxAttempts: 3, maxBackoff: .milliseconds(10))
             ) { _, _ in
                 defer {
                     currentJobTryCount.withLockedValue {
