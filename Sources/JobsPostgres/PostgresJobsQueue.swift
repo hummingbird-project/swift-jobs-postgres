@@ -203,7 +203,7 @@ public final class PostgresJobQueue: JobQueueDriver {
     /// - Parameters
     ///   - id: Job instance ID
     ///   - jobRequest: Job Request
-    ///   - options: JobOptions
+    ///   - options: Job retry options
     public func retry<Parameters: JobParameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
