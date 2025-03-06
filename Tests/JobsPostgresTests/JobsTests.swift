@@ -206,7 +206,7 @@ final class JobsTests: XCTestCase {
         }
         XCTAssertEqual(jobExecutionSequence.withLockedValue { $0 }, [5, 1])
     }
-    
+
     func testJobPriorities() async throws {
         struct TestParameters: JobParameters {
             static let jobName = "testPriorityJobs"
