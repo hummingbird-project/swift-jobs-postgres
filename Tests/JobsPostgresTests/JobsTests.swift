@@ -206,6 +206,49 @@ final class JobsTests: XCTestCase {
         }
         XCTAssertEqual(jobExecutionSequence.withLockedValue { $0 }, [5, 1])
     }
+    
+    func testJobPriorities() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "testPriorityJobs"
+            let value: Int
+        }
+        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 2)
+        let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
+
+        try await self.testJobQueue(numWorkers: 1) { jobQueue in
+            jobQueue.registerJob(parameters: TestParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                jobExecutionSequence.withLockedValue {
+                    $0.append(parameters.value)
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.fulfill()
+            }
+
+            await withThrowingTaskGroup(of: Void.self) { group in
+                for i in 0..<2 {
+                    group.addTask {
+                        try await jobQueue.push(
+                            TestParameters(value: 20 + i),
+                            options: .init(
+                                priority: Int16.random(in: 0..<9)
+                            )
+                        )
+                    }
+                }
+            }
+
+            let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+            XCTAssertEqual(processingJobs.count, 2)
+
+            await fulfillment(of: [expectation], timeout: 10)
+
+            let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+            XCTAssertEqual(pendingJobs.count, 0)
+        }
+        // TODO: need to figure out ordering here
+        //XCTAssertEqual(jobExecutionSequence.withLockedValue { $0 }, [20, 21])
+    }
 
     func testMultipleWorkers() async throws {
         struct TestParameters: JobParameters {
