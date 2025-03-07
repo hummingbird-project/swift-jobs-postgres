@@ -51,30 +51,39 @@ public final class PostgresJobQueue: JobQueueDriver {
         case remove
     }
 
+    /// Job priority
+    public enum JobPriority: Int16, Sendable, PostgresCodable {
+        case lowest = 0
+        case lower = 1
+        case normal = 2
+        case higher = 3
+        case highest = 4
+    }
+
     /// Options for job pushed to queue
     public struct JobOptions: JobOptionsProtocol {
         /// Delay running job until
         public var delayUntil: Date
-        /// Priority for this jobs highest priority 0 to 9, lowest priority
-        public var priority: Int16
+        /// Priority for this job
+        public var priority: JobPriority
 
         /// Default initializer for JobOptions
         public init() {
             self.delayUntil = .now
-            self.priority = 0
+            self.priority = .lowest
         }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         public init(delayUntil: Date?) {
             self.delayUntil = delayUntil ?? .now
-            self.priority = 0
+            self.priority = .normal
         }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         /// - Parameter priority: The priority for a job
-        public init(delayUntil: Date = .now, priority: Int16 = 0) {
+        public init(delayUntil: Date = .now, priority: JobPriority = .normal) {
             self.delayUntil = delayUntil
             self.priority = priority
         }
@@ -82,7 +91,7 @@ public final class PostgresJobQueue: JobQueueDriver {
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         /// - Parameter priority: The priority for a job
-        public init(delayUntil: Date?, priority: Int16 = 0) {
+        public init(delayUntil: Date?, priority: JobPriority = .normal) {
             self.delayUntil = delayUntil ?? .now
             self.priority = priority
         }
@@ -228,7 +237,12 @@ public final class PostgresJobQueue: JobQueueDriver {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
             try await self.updateJob(id: id, buffer: buffer, connection: connection)
-            try await self.addToQueue(jobID: id, queueName: configuration.queueName, options: .init(delayUntil: options.delayUntil), connection: connection)
+            try await self.addToQueue(
+                jobID: id,
+                queueName: configuration.queueName,
+                options: .init(delayUntil: options.delayUntil),
+                connection: connection
+            )
         }
     }
 
@@ -293,7 +307,7 @@ public final class PostgresJobQueue: JobQueueDriver {
                         FROM swift_jobs.queues
                         WHERE delayed_until <= NOW()
                         AND queue_name = \(configuration.queueName)
-                        ORDER BY priority ASC, delayed_until ASC, created_at ASC 
+                        ORDER BY priority DESC, delayed_until ASC, created_at ASC 
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
                     )

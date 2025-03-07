@@ -278,14 +278,14 @@ final class JobsTests: XCTestCase {
             try await queue.push(
                 TestParameters(value: 20),
                 options: .init(
-                    priority: 9
+                    priority: .lowest
                 )
             )
 
             try await queue.push(
                 TestParameters(value: 2025),
                 options: .init(
-                    priority: 2
+                    priority: .highest
                 )
             )
 
@@ -308,7 +308,7 @@ final class JobsTests: XCTestCase {
         }
         XCTAssertEqual(jobExecutionSequence.withLockedValue { $0 }, [2025, 20])
     }
-    
+
     func testJobPrioritiesWithDelay() async throws {
         struct TestParameters: JobParameters {
             static let jobName = "testPriorityJobsWithDelay"
@@ -332,7 +332,7 @@ final class JobsTests: XCTestCase {
             try await queue.push(
                 TestParameters(value: 20),
                 options: .init(
-                    priority: 9
+                    priority: .lower
                 )
             )
 
@@ -340,7 +340,7 @@ final class JobsTests: XCTestCase {
                 TestParameters(value: 2025),
                 options: .init(
                     delayUntil: Date.now.addingTimeInterval(1),
-                    priority: 2
+                    priority: .higher
                 )
             )
 
