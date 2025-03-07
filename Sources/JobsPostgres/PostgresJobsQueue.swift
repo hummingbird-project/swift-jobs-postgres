@@ -228,7 +228,7 @@ public final class PostgresJobQueue: JobQueueDriver {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
             try await self.updateJob(id: id, buffer: buffer, connection: connection)
-            try await self.addToQueue(jobID: id, queueName: configuration.queueName, options: .init(), connection: connection)
+            try await self.addToQueue(jobID: id, queueName: configuration.queueName, options: .init(delayUntil: options.delayUntil), connection: connection)
         }
     }
 
@@ -293,7 +293,7 @@ public final class PostgresJobQueue: JobQueueDriver {
                         FROM swift_jobs.queues
                         WHERE delayed_until <= NOW()
                         AND queue_name = \(configuration.queueName)
-                        ORDER BY created_at ASC, delayed_until ASC, priority ASC
+                        ORDER BY priority ASC, delayed_until ASC, created_at ASC 
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
                     )
