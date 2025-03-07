@@ -51,7 +51,7 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
         try await connection.query(
             """
             CREATE INDEX CONCURRENTLY IF NOT EXISTS queues_delayed_until_priority_queue_name_idx 
-            ON swift_jobs.queues(delayed_until, queue_name, priority ASC)
+            ON swift_jobs.queues(priority ASC, delayed_until ASC, queue_name ASC)
             """,
             logger: logger
         )
