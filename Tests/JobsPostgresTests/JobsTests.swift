@@ -120,6 +120,54 @@ final class JobsTests: XCTestCase {
         }
     }
 
+    /// Helper for testing job priority
+    @discardableResult public func testPriorityJobQueue<T>(
+        jobQueue: JobQueue<PostgresJobQueue>,
+        failedJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
+        processingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
+        pendingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
+        revertMigrations: Bool = false,
+        test: (JobQueue<PostgresJobQueue>) async throws -> T
+    ) async throws -> T {
+        do {
+            return try await withThrowingTaskGroup(of: Void.self) { group in
+                let serviceGroup = ServiceGroup(
+                    configuration: .init(
+                        services: [jobQueue.queue.client],
+                        gracefulShutdownSignals: [.sigterm, .sigint],
+                        logger: jobQueue.queue.logger
+                    )
+                )
+                group.addTask {
+                    try await serviceGroup.run()
+                }
+                do {
+                    let migrations = jobQueue.queue.migrations
+                    let client = jobQueue.queue.client
+                    let logger = jobQueue.queue.logger
+                    if revertMigrations {
+                        try await migrations.revert(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
+                    }
+                    try await migrations.apply(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
+                    try await jobQueue.queue.cleanup(failedJobs: failedJobsInitialization, processingJobs: processingJobsInitialization)
+                    let value = try await test(jobQueue)
+                    await serviceGroup.triggerGracefulShutdown()
+                    return value
+                } catch let error as PSQLError {
+                    XCTFail("\(String(reflecting: error))")
+                    await serviceGroup.triggerGracefulShutdown()
+                    throw error
+                } catch {
+                    await serviceGroup.triggerGracefulShutdown()
+                    throw error
+                }
+            }
+        } catch let error as PSQLError {
+            XCTFail("\(String(reflecting: error))")
+            throw error
+        }
+    }
+
     /// Helper function for test a server
     ///
     /// Creates test client, runs test function abd ensures everything is
@@ -215,8 +263,10 @@ final class JobsTests: XCTestCase {
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 2)
         let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
 
-        try await self.testJobQueue(numWorkers: 1) { jobQueue in
-            jobQueue.registerJob(parameters: TestParameters.self) { parameters, context in
+        let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
+
+        try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
+            queue.registerJob(parameters: TestParameters.self) { parameters, context in
                 context.logger.info("Parameters=\(parameters.value)")
                 jobExecutionSequence.withLockedValue {
                     $0.append(parameters.value)
@@ -225,29 +275,93 @@ final class JobsTests: XCTestCase {
                 expectation.fulfill()
             }
 
-            await withThrowingTaskGroup(of: Void.self) { group in
-                for i in 0..<2 {
-                    group.addTask {
-                        try await jobQueue.push(
-                            TestParameters(value: 20 + i),
-                            options: .init(
-                                priority: Int16.random(in: 0..<9)
-                            )
-                        )
-                    }
+            try await queue.push(
+                TestParameters(value: 20),
+                options: .init(
+                    priority: 9
+                )
+            )
+
+            try await queue.push(
+                TestParameters(value: 2025),
+                options: .init(
+                    priority: 2
+                )
+            )
+
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
+
+                group.addTask {
+                    try await serviceGroup.run()
                 }
+
+                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                XCTAssertEqual(processingJobs.count, 2)
+
+                await fulfillment(of: [expectation], timeout: 10)
+
+                let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                XCTAssertEqual(pendingJobs.count, 0)
+                await serviceGroup.triggerGracefulShutdown()
+            }
+        }
+        XCTAssertEqual(jobExecutionSequence.withLockedValue { $0 }, [2025, 20])
+    }
+    
+    func testJobPrioritiesWithDelay() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "testPriorityJobsWithDelay"
+            let value: Int
+        }
+        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 2)
+        let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
+
+        let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
+
+        try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
+            queue.registerJob(parameters: TestParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                jobExecutionSequence.withLockedValue {
+                    $0.append(parameters.value)
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.fulfill()
             }
 
-            let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-            XCTAssertEqual(processingJobs.count, 2)
+            try await queue.push(
+                TestParameters(value: 20),
+                options: .init(
+                    priority: 9
+                )
+            )
 
-            await fulfillment(of: [expectation], timeout: 10)
+            try await queue.push(
+                TestParameters(value: 2025),
+                options: .init(
+                    delayUntil: Date.now.addingTimeInterval(1),
+                    priority: 2
+                )
+            )
 
-            let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-            XCTAssertEqual(pendingJobs.count, 0)
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
+
+                group.addTask {
+                    try await serviceGroup.run()
+                }
+
+                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                XCTAssertEqual(processingJobs.count, 2)
+
+                await fulfillment(of: [expectation], timeout: 10)
+
+                let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                XCTAssertEqual(pendingJobs.count, 0)
+                await serviceGroup.triggerGracefulShutdown()
+            }
         }
-        // TODO: need to figure out ordering here
-        //XCTAssertEqual(jobExecutionSequence.withLockedValue { $0 }, [20, 21])
+        XCTAssertEqual(jobExecutionSequence.withLockedValue { $0 }, [20, 2025])
     }
 
     func testMultipleWorkers() async throws {
