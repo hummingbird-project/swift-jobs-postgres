@@ -70,7 +70,7 @@ public final class PostgresJobQueue: JobQueueDriver {
         /// Default initializer for JobOptions
         public init() {
             self.delayUntil = .now
-            self.priority = .lowest
+            self.priority = .normal
         }
 
         ///  Initializer for JobOptions
@@ -85,14 +85,6 @@ public final class PostgresJobQueue: JobQueueDriver {
         /// - Parameter priority: The priority for a job
         public init(delayUntil: Date = .now, priority: JobPriority = .normal) {
             self.delayUntil = delayUntil
-            self.priority = priority
-        }
-
-        ///  Initializer for JobOptions
-        /// - Parameter delayUntil: Whether job execution should be delayed until a later date
-        /// - Parameter priority: The priority for a job
-        public init(delayUntil: Date?, priority: JobPriority = .normal) {
-            self.delayUntil = delayUntil ?? .now
             self.priority = priority
         }
     }

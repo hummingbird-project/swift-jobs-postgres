@@ -292,12 +292,12 @@ final class JobsTests: XCTestCase {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
 
+                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                XCTAssertEqual(processingJobs.count, 2)
+
                 group.addTask {
                     try await serviceGroup.run()
                 }
-
-                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-                XCTAssertEqual(processingJobs.count, 2)
 
                 await fulfillment(of: [expectation], timeout: 10)
 
@@ -347,12 +347,12 @@ final class JobsTests: XCTestCase {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
 
+                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                XCTAssertEqual(processingJobs.count, 2)
+
                 group.addTask {
                     try await serviceGroup.run()
                 }
-
-                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-                XCTAssertEqual(processingJobs.count, 2)
 
                 await fulfillment(of: [expectation], timeout: 10)
 
