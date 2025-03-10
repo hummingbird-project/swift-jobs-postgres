@@ -51,13 +51,38 @@ public final class PostgresJobQueue: JobQueueDriver {
         case remove
     }
 
-    /// Job priority
-    public enum JobPriority: Int16, Sendable, PostgresCodable {
-        case lowest = 0
-        case lower = 1
-        case normal = 2
-        case higher = 3
-        case highest = 4
+    /// Job priority from lowest to highest
+    public struct JobPriority: Equatable, Sendable {
+        let rawValue: Priority
+
+        // Job priority
+        enum Priority: Int16, Sendable, PostgresCodable {
+            case lowest = 0
+            case lower = 1
+            case normal = 2
+            case higher = 3
+            case highest = 4
+        }
+        /// Lowest priority
+        public static func lowest() -> JobPriority {
+            JobPriority(rawValue: .lowest)
+        }
+        /// Lower priority
+        public static func lower() -> JobPriority {
+            JobPriority(rawValue: .lower)
+        }
+        /// Normal is the default priority
+        public static func normal() -> JobPriority {
+            JobPriority(rawValue: .normal)
+        }
+        /// Higher priority
+        public static func higher() -> JobPriority {
+            JobPriority(rawValue: .higher)
+        }
+        /// Higgest priority
+        public static func highest() -> JobPriority {
+            JobPriority(rawValue: .highest)
+        }
     }
 
     /// Options for job pushed to queue
@@ -70,20 +95,20 @@ public final class PostgresJobQueue: JobQueueDriver {
         /// Default initializer for JobOptions
         public init() {
             self.delayUntil = .now
-            self.priority = .normal
+            self.priority = .normal()
         }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         public init(delayUntil: Date?) {
             self.delayUntil = delayUntil ?? .now
-            self.priority = .normal
+            self.priority = .normal()
         }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         /// - Parameter priority: The priority for a job
-        public init(delayUntil: Date = .now, priority: JobPriority = .normal) {
+        public init(delayUntil: Date = .now, priority: JobPriority = .normal()) {
             self.delayUntil = delayUntil
             self.priority = priority
         }
@@ -411,7 +436,7 @@ public final class PostgresJobQueue: JobQueueDriver {
         try await connection.query(
             """
             INSERT INTO swift_jobs.queues (job_id, created_at, delayed_until, queue_name, priority)
-            VALUES (\(jobID), \(Date.now), \(options.delayUntil), \(queueName), \(options.priority))
+            VALUES (\(jobID), \(Date.now), \(options.delayUntil), \(queueName), \(options.priority.rawValue))
             -- We have found an existing job with the same id, SKIP this INSERT 
             ON CONFLICT (job_id) DO NOTHING
             """,

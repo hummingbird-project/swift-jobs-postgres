@@ -278,14 +278,14 @@ final class JobsTests: XCTestCase {
             try await queue.push(
                 TestParameters(value: 20),
                 options: .init(
-                    priority: .lowest
+                    priority: .lowest()
                 )
             )
 
             try await queue.push(
                 TestParameters(value: 2025),
                 options: .init(
-                    priority: .highest
+                    priority: .highest()
                 )
             )
 
@@ -332,7 +332,7 @@ final class JobsTests: XCTestCase {
             try await queue.push(
                 TestParameters(value: 20),
                 options: .init(
-                    priority: .lower
+                    priority: .lower()
                 )
             )
 
@@ -340,7 +340,7 @@ final class JobsTests: XCTestCase {
                 TestParameters(value: 2025),
                 options: .init(
                     delayUntil: Date.now.addingTimeInterval(1),
-                    priority: .higher
+                    priority: .higher()
                 )
             )
 
