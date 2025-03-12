@@ -794,7 +794,7 @@ final class JobsTests: XCTestCase {
                 XCTAssertEqual(cancelledJobs.count, 1)
 
                 await serviceGroup.triggerGracefulShutdown()
-                
+
                 try await jobQueue.queue.delete(jobID: cancellableJob)
             }
         }

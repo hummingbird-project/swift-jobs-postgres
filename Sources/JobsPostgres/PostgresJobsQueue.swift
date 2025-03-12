@@ -43,7 +43,7 @@ import PostgresNIO
 /// }
 /// ```
 public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, ResumableJobQueue {
-    
+
     public typealias JobID = UUID
     /// what to do with failed/processing jobs from last time queue was handled
     public enum JobCleanup: Sendable {
@@ -484,7 +484,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             logger: self.logger
         )
     }
-    
+
     func deleteFromQueue(jobID: JobID, connection: PostgresConnection) async throws {
         try await connection.query(
             """
