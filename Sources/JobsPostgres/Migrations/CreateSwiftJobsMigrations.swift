@@ -25,11 +25,11 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
         try await connection.query(
             """
             CREATE TABLE IF NOT EXISTS swift_jobs.jobs (
-                id uuid PRIMARY KEY,
-                job bytea NOT NULL,
+                id UUID PRIMARY KEY,
+                job BYTEA NOT NULL,
                 last_modified TIMESTAMPTZ NOT NULL DEFAULT now(),
                 queue_name TEXT NOT NULL DEFAULT 'default',
-                status smallint NOT NULL
+                status SMALLINT NOT NULL
             );
             """,
             logger: logger
@@ -38,7 +38,7 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
         try await connection.query(
             """
             CREATE TABLE IF NOT EXISTS swift_jobs.queues(
-                job_id uuid PRIMARY KEY,
+                job_id UUID PRIMARY KEY,
                 created_at TIMESTAMPTZ NOT NULL,
                 delayed_until TIMESTAMPTZ NOT NULL DEFAULT now(),
                 queue_name TEXT NOT NULL DEFAULT 'default',
@@ -50,7 +50,7 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
 
         try await connection.query(
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS queues_delayed_until_priority_queue_name_idx 
+            CREATE INDEX IF NOT EXISTS queues_delayed_until_priority_queue_name_idx 
             ON swift_jobs.queues(priority DESC, delayed_until ASC, queue_name ASC)
             """,
             logger: logger
@@ -69,7 +69,7 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
 
         try await connection.query(
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS queues_metadata_key_queue_name_idx
+            CREATE INDEX IF NOT EXISTS queues_metadata_key_queue_name_idx
             ON swift_jobs.queues_metadata(key, queue_name)
             """,
             logger: logger
