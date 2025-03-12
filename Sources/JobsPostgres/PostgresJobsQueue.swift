@@ -42,7 +42,7 @@ import PostgresNIO
 ///     try await migrations.apply(client: postgresClient, logger: logger, dryRun: applyMigrations)
 /// }
 /// ```
-public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueueProtocol, ResumeableJobQueueProtocol {
+public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, ResumableJobQueue {
     
     public typealias JobID = UUID
     /// what to do with failed/processing jobs from last time queue was handled
@@ -174,7 +174,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueueProtocol
         self.logger = logger
         self.isStopped = .init(false)
         self.migrations = migrations
-        await migrations.add(CreateSwiftJobsMigrations(), checkForDuplicates: true)
+        await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
     }
 
     public func onInit() async throws {
