@@ -131,6 +131,8 @@ public final class PostgresJobQueue: JobQueueDriver {
         case pending = 0
         case processing = 1
         case failed = 2
+        case paused = 3
+        case cancelled = 4
     }
 
     /// Queue configuration
@@ -247,20 +249,49 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     /// Retry an existing Job
     /// - Parameters
-    ///   - id: Job instance ID
+    ///   - jobID: Job instance ID
     ///   - jobRequest: Job Request
     ///   - options: Job retry options
-    public func retry<Parameters: JobParameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
+    public func retry<Parameters: JobParameters>(_ jobID: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.updateJob(id: id, buffer: buffer, connection: connection)
+            try await self.updateJob(jobID: jobID, buffer: buffer, connection: connection)
             try await self.addToQueue(
-                jobID: id,
+                jobID: jobID,
                 queueName: configuration.queueName,
                 options: .init(delayUntil: options.delayUntil),
                 connection: connection
             )
         }
+    }
+
+    /// Perform actions on job
+    /// - Parameters
+    ///   - jobID: Job instance ID
+    ///   - action Job Action
+    public func performAction(jobID: JobID, action: JobAction) async throws {
+        switch action {
+            case .cancel():
+                try await self.performJobAction(jobID: jobID, status: .cancelled)
+            case .pause():
+                try await self.performJobAction(jobID: jobID, status: .paused)
+            case .resume():
+                try await self.client.withTransaction(logger: logger) { connection in
+                    try await self.setStatus(jobID: jobID, status: .pending, connection: connection)
+                    try await self.addToQueue(
+                        jobID: jobID,
+                        queueName: configuration.queueName,
+                        options: .init(),
+                        connection: connection
+                    )
+                }
+            default:
+                break
+        }
+    }
+    
+    public func isEmpty() async throws -> Bool {
+        true
     }
 
     /// This is called to say job has finished processing and it can be deleted
@@ -408,15 +439,15 @@ public final class PostgresJobQueue: JobQueueDriver {
             logger: self.logger
         )
     }
-    // TODO: maybe add a new column colum for attempt so far after PR https://github.com/hummingbird-project/swift-jobs/pull/63 is merged?
-    func updateJob(id: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
+
+    func updateJob(jobID: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
         try await connection.query(
             """
             UPDATE swift_jobs.jobs
             SET job = \(buffer),
                 last_modified = \(Date.now),
                 status = \(Status.failed)
-            WHERE id = \(id) AND queue_name = \(configuration.queueName)
+            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
             """,
             logger: self.logger
         )
@@ -483,6 +514,20 @@ public final class PostgresJobQueue: JobQueueDriver {
             jobs.append(id)
         }
         return jobs
+    }
+
+    func performJobAction(jobID: JobID, status: Status) async throws {
+        try await self.client.withTransaction(logger: logger) { connection in
+            
+            try await connection.query(
+                """
+                DELETE FROM swift_jobs.queues
+                WHERE job_id = \(jobID) AND queue_name = \(configuration.queueName)
+                """,
+                logger: self.logger
+            )
+            try await self.setStatus(jobID: jobID, status: status, connection: connection)
+        }
     }
 
     func updateJobsOnInit(withStatus status: Status, onInit: JobCleanup, connection: PostgresConnection) async throws {
