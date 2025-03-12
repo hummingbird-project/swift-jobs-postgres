@@ -683,7 +683,7 @@ final class JobsTests: XCTestCase {
             group.cancelAll()
         }
     }
-    
+
     func testJobActions() async throws {
         struct TestParameters: JobParameters {
             static let jobName = "testJobActions"

@@ -271,27 +271,23 @@ public final class PostgresJobQueue: JobQueueDriver {
     ///   - action Job Action
     public func performAction(jobID: JobID, action: JobAction) async throws {
         switch action {
-            case .cancel():
-                try await self.performJobAction(jobID: jobID, status: .cancelled)
-            case .pause():
-                try await self.performJobAction(jobID: jobID, status: .paused)
-            case .resume():
-                try await self.client.withTransaction(logger: logger) { connection in
-                    try await self.setStatus(jobID: jobID, status: .pending, connection: connection)
-                    try await self.addToQueue(
-                        jobID: jobID,
-                        queueName: configuration.queueName,
-                        options: .init(),
-                        connection: connection
-                    )
-                }
-            default:
-                break
+        case .cancel():
+            try await self.performJobAction(jobID: jobID, status: .cancelled)
+        case .pause():
+            try await self.performJobAction(jobID: jobID, status: .paused)
+        case .resume():
+            try await self.client.withTransaction(logger: logger) { connection in
+                try await self.setStatus(jobID: jobID, status: .pending, connection: connection)
+                try await self.addToQueue(
+                    jobID: jobID,
+                    queueName: configuration.queueName,
+                    options: .init(),
+                    connection: connection
+                )
+            }
+        default:
+            break
         }
-    }
-    
-    public func isEmpty() async throws -> Bool {
-        true
     }
 
     /// This is called to say job has finished processing and it can be deleted
@@ -518,7 +514,6 @@ public final class PostgresJobQueue: JobQueueDriver {
 
     func performJobAction(jobID: JobID, status: Status) async throws {
         try await self.client.withTransaction(logger: logger) { connection in
-            
             try await connection.query(
                 """
                 DELETE FROM swift_jobs.queues
