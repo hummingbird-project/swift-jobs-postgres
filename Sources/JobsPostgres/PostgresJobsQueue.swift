@@ -142,6 +142,8 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         let pollTime: Duration
         /// Which Queue to push jobs into
         let queueName: String
+        /// What to do with cancelled jobs
+        let deleteCancelledJobs: Bool
 
         ///  Initialize configuration
         /// - Parameters
@@ -149,10 +151,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         ///   - queueName: Name of queue we are handing
         public init(
             pollTime: Duration = .milliseconds(100),
-            queueName: String = "default"
+            queueName: String = "default",
+            deleteCancelledJobs: Bool = true
         ) {
             self.pollTime = pollTime
             self.queueName = queueName
+            self.deleteCancelledJobs = deleteCancelledJobs
         }
     }
 
@@ -194,6 +198,10 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     public func cancel(jobID: JobID) async throws {
         try await self.client.withTransaction(logger: logger) { connection in
             try await deleteFromQueue(jobID: jobID, connection: connection)
+            if configuration.deleteCancelledJobs {
+                try await delete(jobID: jobID)
+                return
+            }
             try await setStatus(jobID: jobID, status: .cancelled, connection: connection)
         }
     }

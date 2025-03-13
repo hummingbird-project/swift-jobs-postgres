@@ -704,14 +704,12 @@ final class JobsTests: XCTestCase {
                 expectation.fulfill()
             }
 
-            let firstJob = try await queue.push(
+            let resumableJob = try await queue.push(
                 TestParameters(value: 20),
                 options: .init(
                     priority: .lowest()
                 )
             )
-
-            try await jobQueue.pauseJob(jobID: firstJob)
 
             try await queue.push(
                 TestParameters(value: 2025),
@@ -719,6 +717,8 @@ final class JobsTests: XCTestCase {
                     priority: .normal()
                 )
             )
+
+            try await jobQueue.pauseJob(jobID: resumableJob)
 
             try await withThrowingTaskGroup(of: Void.self) { group in
                 let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
@@ -729,16 +729,21 @@ final class JobsTests: XCTestCase {
                 group.addTask {
                     try await serviceGroup.run()
                 }
-
+                
+                let processingJobCount = try await jobQueue.queue.getJobs(withStatus: .processing)
+                // Job 2 has been processed
+                XCTAssertEqual(processingJobCount.count, 0)
+                // Job 1 has not been processed
                 let pausedJobs = try await jobQueue.queue.getJobs(withStatus: .paused)
                 XCTAssertEqual(pausedJobs.count, 1)
-
-                try await jobQueue.resumeJob(jobID: firstJob)
+                // resume job 1
+                try await jobQueue.resumeJob(jobID: resumableJob)
 
                 await fulfillment(of: [expectation], timeout: 10)
                 await serviceGroup.triggerGracefulShutdown()
             }
         }
+        // verify job run order
         XCTAssertEqual(jobExecutionSequence.withLockedValue { $0 }, [2025, 20])
     }
 
