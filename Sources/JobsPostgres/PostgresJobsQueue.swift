@@ -200,9 +200,9 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             try await deleteFromQueue(jobID: jobID, connection: connection)
             if configuration.deleteCancelledJobs {
                 try await delete(jobID: jobID)
-                return
+            } else {
+                try await setStatus(jobID: jobID, status: .cancelled, connection: connection)
             }
-            try await setStatus(jobID: jobID, status: .cancelled, connection: connection)
         }
     }
 

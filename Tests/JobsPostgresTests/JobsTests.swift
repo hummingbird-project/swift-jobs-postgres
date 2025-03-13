@@ -794,9 +794,9 @@ final class JobsTests: XCTestCase {
                 }
 
                 await fulfillment(of: [expectation], timeout: 10)
-
+                // Job has been removed
                 let cancelledJobs = try await jobQueue.queue.getJobs(withStatus: .cancelled)
-                XCTAssertEqual(cancelledJobs.count, 1)
+                XCTAssertEqual(cancelledJobs.count, 0)
 
                 await serviceGroup.triggerGracefulShutdown()
 
