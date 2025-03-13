@@ -11,7 +11,7 @@ let package = Package(
     dependencies: [
         // TODO: use a released version of swift-jobs
         .package(url: "https://github.com/hummingbird-project/swift-jobs.git", branch: "main"),
-        .package(url: "https://github.com/hummingbird-project/hummingbird-postgres.git", branch: "main"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird-postgres.git", from: "0.6.0"),
         .package(url: "https://github.com/vapor/postgres-nio.git", from: "1.25.0"),
     ],
     targets: [
