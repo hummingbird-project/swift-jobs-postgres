@@ -729,7 +729,7 @@ final class JobsTests: XCTestCase {
                 group.addTask {
                     try await serviceGroup.run()
                 }
-                
+
                 let processingJobCount = try await jobQueue.queue.getJobs(withStatus: .processing)
                 // Job 2 has been processed
                 XCTAssertEqual(processingJobCount.count, 0)
