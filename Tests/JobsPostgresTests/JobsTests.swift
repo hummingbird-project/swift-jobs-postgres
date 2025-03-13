@@ -762,17 +762,17 @@ final class JobsTests: XCTestCase {
                 expectation.fulfill()
             }
 
-            try await queue.push(
-                TestParameters(value: 2025),
-                options: .init(
-                    priority: .highest()
-                )
-            )
-
             let cancellableJob = try await queue.push(
                 TestParameters(value: 42),
                 options: .init(
                     priority: .lower()
+                )
+            )
+
+            try await queue.push(
+                TestParameters(value: 2025),
+                options: .init(
+                    priority: .highest()
                 )
             )
 
