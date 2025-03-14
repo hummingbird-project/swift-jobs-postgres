@@ -752,16 +752,30 @@ final class JobsTests: XCTestCase {
             static let jobName = "testCancellableJob"
             let value: Int
         }
+        struct NoneCancelledJobParameters: JobParameters {
+            static let jobName = "NoneCancelledJob"
+            let value: Int
+        }
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 1)
-        let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
+        let didRunCancelledJob: NIOLockedValueBox<Bool> = .init(false)
+        let didRunNoneCancelledJob: NIOLockedValueBox<Bool> = .init(false)
 
         let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, context in
                 context.logger.info("Parameters=\(parameters.value)")
-                jobExecutionSequence.withLockedValue {
-                    $0.append(parameters.value)
+                didRunCancelledJob.withLockedValue {
+                    $0 = true
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.fulfill()
+            }
+
+            queue.registerJob(parameters: NoneCancelledJobParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                didRunNoneCancelledJob.withLockedValue {
+                    $0 = true
                 }
                 try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
                 expectation.fulfill()
@@ -775,7 +789,7 @@ final class JobsTests: XCTestCase {
             )
 
             try await queue.push(
-                TestParameters(value: 2025),
+                NoneCancelledJobParameters(value: 2025),
                 options: .init(
                     priority: .highest()
                 )
@@ -794,15 +808,14 @@ final class JobsTests: XCTestCase {
                 }
 
                 await fulfillment(of: [expectation], timeout: 10)
-                // Job has been removed
+                // Jobs has been removed
                 let cancelledJobs = try await jobQueue.queue.getJobs(withStatus: .cancelled)
                 XCTAssertEqual(cancelledJobs.count, 0)
 
                 await serviceGroup.triggerGracefulShutdown()
-
-                try await jobQueue.queue.delete(jobID: cancellableJob)
             }
         }
-        XCTAssertEqual(jobExecutionSequence.withLockedValue { $0 }, [2025])
+        XCTAssertEqual(didRunCancelledJob.withLockedValue { $0 }, false)
+        XCTAssertEqual(didRunNoneCancelledJob.withLockedValue { $0 }, true)
     }
 }
