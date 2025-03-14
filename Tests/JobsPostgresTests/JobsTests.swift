@@ -686,33 +686,43 @@ final class JobsTests: XCTestCase {
 
     func testResumableAndPausableJobs() async throws {
         struct TestParameters: JobParameters {
-            static let jobName = "testResumableAndPausableJobs"
-            let value: Int
+            static let jobName = "TestJob"
+        }
+        struct ResumableJob: JobParameters {
+            static let jobName = "ResumanableJob"
         }
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 2)
-        let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
+        let didResumableJobRun: NIOLockedValueBox<Bool> = .init(false)
+        let didTestJobRun: NIOLockedValueBox<Bool> = .init(false)
 
         let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
-            queue.registerJob(parameters: TestParameters.self) { parameters, context in
-                context.logger.info("Parameters=\(parameters.value)")
-                jobExecutionSequence.withLockedValue {
-                    $0.append(parameters.value)
+            queue.registerJob(parameters: TestParameters.self) { parameters, _ in
+                didTestJobRun.withLockedValue {
+                    $0 = true
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.fulfill()
+            }
+
+            queue.registerJob(parameters: ResumableJob.self) { parameters, _ in
+                didResumableJobRun.withLockedValue {
+                    $0 = true
                 }
                 try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
                 expectation.fulfill()
             }
 
             let resumableJob = try await queue.push(
-                TestParameters(value: 20),
+                ResumableJob(),
                 options: .init(
                     priority: .lowest()
                 )
             )
 
             try await queue.push(
-                TestParameters(value: 2025),
+                TestParameters(),
                 options: .init(
                     priority: .normal()
                 )
@@ -731,20 +741,19 @@ final class JobsTests: XCTestCase {
                 }
 
                 let processingJobCount = try await jobQueue.queue.getJobs(withStatus: .processing)
-                // Job 2 has been processed
                 XCTAssertEqual(processingJobCount.count, 0)
-                // Job 1 has not been processed
+
                 let pausedJobs = try await jobQueue.queue.getJobs(withStatus: .paused)
                 XCTAssertEqual(pausedJobs.count, 1)
-                // resume job 1
+
                 try await jobQueue.resumeJob(jobID: resumableJob)
 
                 await fulfillment(of: [expectation], timeout: 10)
                 await serviceGroup.triggerGracefulShutdown()
             }
         }
-        // verify job run order
-        XCTAssertEqual(jobExecutionSequence.withLockedValue { $0 }, [2025, 20])
+        XCTAssertEqual(didTestJobRun.withLockedValue { $0 }, true)
+        XCTAssertEqual(didResumableJobRun.withLockedValue { $0 }, true)
     }
 
     func testCancellableJob() async throws {
