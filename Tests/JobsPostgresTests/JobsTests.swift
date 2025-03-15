@@ -683,4 +683,148 @@ final class JobsTests: XCTestCase {
             group.cancelAll()
         }
     }
+
+    func testResumableAndPausableJobs() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "TestJob"
+        }
+        struct ResumableJob: JobParameters {
+            static let jobName = "ResumanableJob"
+        }
+        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 2)
+        let didResumableJobRun: NIOLockedValueBox<Bool> = .init(false)
+        let didTestJobRun: NIOLockedValueBox<Bool> = .init(false)
+
+        let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
+
+        try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
+            queue.registerJob(parameters: TestParameters.self) { parameters, _ in
+                didTestJobRun.withLockedValue {
+                    $0 = true
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.fulfill()
+            }
+
+            queue.registerJob(parameters: ResumableJob.self) { parameters, _ in
+                didResumableJobRun.withLockedValue {
+                    $0 = true
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.fulfill()
+            }
+
+            let resumableJob = try await queue.push(
+                ResumableJob(),
+                options: .init(
+                    priority: .lowest()
+                )
+            )
+
+            try await queue.push(
+                TestParameters(),
+                options: .init(
+                    priority: .normal()
+                )
+            )
+
+            try await jobQueue.pauseJob(jobID: resumableJob)
+
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
+
+                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                XCTAssertEqual(processingJobs.count, 1)
+
+                group.addTask {
+                    try await serviceGroup.run()
+                }
+
+                let processingJobCount = try await jobQueue.queue.getJobs(withStatus: .processing)
+                XCTAssertEqual(processingJobCount.count, 0)
+
+                let pausedJobs = try await jobQueue.queue.getJobs(withStatus: .paused)
+                XCTAssertEqual(pausedJobs.count, 1)
+
+                try await jobQueue.resumeJob(jobID: resumableJob)
+
+                await fulfillment(of: [expectation], timeout: 10)
+                await serviceGroup.triggerGracefulShutdown()
+            }
+        }
+        XCTAssertEqual(didTestJobRun.withLockedValue { $0 }, true)
+        XCTAssertEqual(didResumableJobRun.withLockedValue { $0 }, true)
+    }
+
+    func testCancellableJob() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "testCancellableJob"
+            let value: Int
+        }
+        struct NoneCancelledJobParameters: JobParameters {
+            static let jobName = "NoneCancelledJob"
+            let value: Int
+        }
+        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 1)
+        let didRunCancelledJob: NIOLockedValueBox<Bool> = .init(false)
+        let didRunNoneCancelledJob: NIOLockedValueBox<Bool> = .init(false)
+
+        let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
+
+        try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
+            queue.registerJob(parameters: TestParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                didRunCancelledJob.withLockedValue {
+                    $0 = true
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.fulfill()
+            }
+
+            queue.registerJob(parameters: NoneCancelledJobParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                didRunNoneCancelledJob.withLockedValue {
+                    $0 = true
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.fulfill()
+            }
+
+            let cancellableJob = try await queue.push(
+                TestParameters(value: 42),
+                options: .init(
+                    priority: .lower()
+                )
+            )
+
+            try await queue.push(
+                NoneCancelledJobParameters(value: 2025),
+                options: .init(
+                    priority: .highest()
+                )
+            )
+
+            try await jobQueue.cancelJob(jobID: cancellableJob)
+
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
+
+                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                XCTAssertEqual(processingJobs.count, 1)
+
+                group.addTask {
+                    try await serviceGroup.run()
+                }
+
+                await fulfillment(of: [expectation], timeout: 10)
+                // Jobs has been removed
+                let cancelledJobs = try await jobQueue.queue.getJobs(withStatus: .cancelled)
+                XCTAssertEqual(cancelledJobs.count, 0)
+
+                await serviceGroup.triggerGracefulShutdown()
+            }
+        }
+        XCTAssertEqual(didRunCancelledJob.withLockedValue { $0 }, false)
+        XCTAssertEqual(didRunNoneCancelledJob.withLockedValue { $0 }, true)
+    }
 }

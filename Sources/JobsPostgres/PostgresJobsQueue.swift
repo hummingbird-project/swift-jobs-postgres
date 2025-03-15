@@ -42,7 +42,8 @@ import PostgresNIO
 ///     try await migrations.apply(client: postgresClient, logger: logger, dryRun: applyMigrations)
 /// }
 /// ```
-public final class PostgresJobQueue: JobQueueDriver {
+public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, ResumableJobQueue {
+
     public typealias JobID = UUID
     /// what to do with failed/processing jobs from last time queue was handled
     public enum JobCleanup: Sendable {
@@ -131,6 +132,8 @@ public final class PostgresJobQueue: JobQueueDriver {
         case pending = 0
         case processing = 1
         case failed = 2
+        case cancelled = 3
+        case paused = 4
     }
 
     /// Queue configuration
@@ -171,13 +174,63 @@ public final class PostgresJobQueue: JobQueueDriver {
         self.logger = logger
         self.isStopped = .init(false)
         self.migrations = migrations
-        await migrations.add(CreateSwiftJobsMigrations())
+        await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
     }
 
     public func onInit() async throws {
         self.logger.info("Waiting for JobQueue migrations")
         /// Need migrations to have completed before job queue processing can start
         try await self.migrations.waitUntilCompleted()
+    }
+
+    ///  Cancel job
+    ///
+    /// This function is used to cancel a job. Job cancellation is not gaurenteed howerever.
+    /// Cancellable jobs are jobs with a delayed greather than when the cancellation request was made
+    ///
+    /// - Parameters:
+    ///   - jobID: an existing job
+    /// - Throws:
+    public func cancel(jobID: JobID) async throws {
+        try await self.client.withTransaction(logger: logger) { connection in
+            try await deleteFromQueue(jobID: jobID, connection: connection)
+            try await delete(jobID: jobID)
+        }
+    }
+
+    ///  Pause job
+    ///
+    /// This function is used to pause a job. Job paus is not gaurenteed howerever.
+    /// Pausable jobs are jobs with a delayed greather than when the pause request was made
+    ///
+    /// - Parameters:
+    ///   - jobID: an existing job
+    /// - Throws:
+    public func pause(jobID: UUID) async throws {
+        try await self.client.withTransaction(logger: logger) { connection in
+            try await deleteFromQueue(jobID: jobID, connection: connection)
+            try await setStatus(jobID: jobID, status: .paused, connection: connection)
+        }
+    }
+
+    ///  Resume job
+    ///
+    /// This function is used to resume jobs. Job  is not gaurenteed howerever.
+    /// Cancellable jobs are jobs with a delayed greather than when the cancellation request was made
+    ///
+    /// - Parameters:
+    ///   - jobID: an existing job
+    /// - Throws:
+    public func resume(jobID: JobID) async throws {
+        try await self.client.withTransaction(logger: logger) { connection in
+            try await setStatus(jobID: jobID, status: .pending, connection: connection)
+            try await addToQueue(
+                jobID: jobID,
+                queueName: configuration.queueName,
+                options: .init(),
+                connection: connection
+            )
+        }
     }
 
     ///  Cleanup job queues
@@ -427,6 +480,16 @@ public final class PostgresJobQueue: JobQueueDriver {
             """
             DELETE FROM swift_jobs.jobs
             WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
+            """,
+            logger: self.logger
+        )
+    }
+
+    func deleteFromQueue(jobID: JobID, connection: PostgresConnection) async throws {
+        try await connection.query(
+            """
+            DELETE FROM swift_jobs.queues
+            WHERE job_id = \(jobID) AND queue_name = \(configuration.queueName)
             """,
             logger: self.logger
         )
