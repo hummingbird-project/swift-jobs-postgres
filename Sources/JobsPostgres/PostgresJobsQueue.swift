@@ -308,7 +308,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             )
             return insertedJobID
         }
-        
+
         if insertedJob != jobID {
             // TODO: introduce a duplicate jobID error
             throw JobQueueError(code: .unrecognisedJobId, jobName: Parameters.jobName)
@@ -318,15 +318,15 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// Retry an existing Job
     /// - Parameters
-    ///   - id: Job instance ID
+    ///   - jobID: Job instance ID
     ///   - jobRequest: Job Request
     ///   - options: Job retry options
-    public func retry<Parameters: JobParameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
+    public func retry<Parameters: JobParameters>(_ jobID: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.updateJob(id: id, buffer: buffer, connection: connection)
+            try await self.updateJob(jobID: jobID, buffer: buffer, connection: connection)
             try await self.addToQueue(
-                jobID: id,
+                jobID: jobID,
                 queueName: configuration.queueName,
                 options: .init(delayUntil: options.delayUntil),
                 connection: connection
@@ -488,15 +488,15 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         )
         return try await stream.decode(JobID.self).first(where: { _ in true })
     }
-    // TODO: maybe add a new column colum for attempt so far after PR https://github.com/hummingbird-project/swift-jobs/pull/63 is merged?
-    func updateJob(id: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
+
+    func updateJob(jobID: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
         try await connection.query(
             """
             UPDATE swift_jobs.jobs
             SET job = \(buffer),
                 last_modified = \(Date.now),
                 status = \(Status.failed)
-            WHERE id = \(id) AND queue_name = \(configuration.queueName)
+            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
             """,
             logger: self.logger
         )
