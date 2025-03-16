@@ -132,6 +132,8 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         let pollTime: Duration
         /// Which Queue to push jobs into
         let queueName: String
+        /// Retention policy for jobs
+        let retentionPolicy: RetentionPolicy
 
         ///  Initialize configuration
         /// - Parameters
@@ -139,10 +141,16 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         ///   - queueName: Name of queue we are handing
         public init(
             pollTime: Duration = .milliseconds(100),
-            queueName: String = "default"
+            queueName: String = "default",
+            retentionPolicy: RetentionPolicy = .init(
+                canceled: .init(duration: "7D"),
+                completed: .init(duration: "7D"),
+                failed: .init(duration: "7D")
+            ) //.keepAll()
         ) {
             self.pollTime = pollTime
             self.queueName = queueName
+            self.retentionPolicy = retentionPolicy
         }
     }
 
