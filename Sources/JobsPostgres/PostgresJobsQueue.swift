@@ -65,25 +65,15 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             case highest = 4
         }
         /// Lowest priority
-        public static func lowest() -> JobPriority {
-            JobPriority(rawValue: .lowest)
-        }
+        public static let lowest: JobPriority = JobPriority(rawValue: .lowest)
         /// Lower priority
-        public static func lower() -> JobPriority {
-            JobPriority(rawValue: .lower)
-        }
+        public static let lower: JobPriority = JobPriority(rawValue: .lower)
         /// Normal is the default priority
-        public static func normal() -> JobPriority {
-            JobPriority(rawValue: .normal)
-        }
+        public static let normal: JobPriority = JobPriority(rawValue: .normal)
         /// Higher priority
-        public static func higher() -> JobPriority {
-            JobPriority(rawValue: .higher)
-        }
+        public static let higher: JobPriority = JobPriority(rawValue: .higher)
         /// Higgest priority
-        public static func highest() -> JobPriority {
-            JobPriority(rawValue: .highest)
-        }
+        public static let highest: JobPriority = JobPriority(rawValue: .highest)
     }
 
     /// Options for job pushed to queue
@@ -96,20 +86,20 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         /// Default initializer for JobOptions
         public init() {
             self.delayUntil = .now
-            self.priority = .normal()
+            self.priority = .normal
         }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         public init(delayUntil: Date?) {
             self.delayUntil = delayUntil ?? .now
-            self.priority = .normal()
+            self.priority = .normal
         }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         /// - Parameter priority: The priority for a job
-        public init(delayUntil: Date = .now, priority: JobPriority = .normal()) {
+        public init(delayUntil: Date = .now, priority: JobPriority = .normal) {
             self.delayUntil = delayUntil
             self.priority = priority
         }
@@ -142,6 +132,8 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         let pollTime: Duration
         /// Which Queue to push jobs into
         let queueName: String
+        /// Retention policy for jobs
+        let retentionPolicy: RetentionPolicy
 
         ///  Initialize configuration
         /// - Parameters
@@ -149,10 +141,16 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         ///   - queueName: Name of queue we are handing
         public init(
             pollTime: Duration = .milliseconds(100),
-            queueName: String = "default"
+            queueName: String = "default",
+            retentionPolicy: RetentionPolicy = .init(
+                canceled: .init(duration: "7D"),
+                completed: .init(duration: "7D"),
+                failed: .init(duration: "7D")
+            ) //.keepAll()
         ) {
             self.pollTime = pollTime
             self.queueName = queueName
+            self.retentionPolicy = retentionPolicy
         }
     }
 
