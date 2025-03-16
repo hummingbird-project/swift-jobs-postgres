@@ -29,7 +29,9 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
                 job BYTEA NOT NULL,
                 last_modified TIMESTAMPTZ NOT NULL DEFAULT now(),
                 queue_name TEXT NOT NULL DEFAULT 'default',
-                status SMALLINT NOT NULL
+                status SMALLINT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                unique_key TEXT NOT NULL UNIQUE
             );
             """,
             logger: logger

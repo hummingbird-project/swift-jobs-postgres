@@ -278,14 +278,14 @@ final class JobsTests: XCTestCase {
             try await queue.push(
                 TestParameters(value: 20),
                 options: .init(
-                    priority: .lowest()
+                    priority: .lowest
                 )
             )
 
             try await queue.push(
                 TestParameters(value: 2025),
                 options: .init(
-                    priority: .highest()
+                    priority: .highest
                 )
             )
 
@@ -332,7 +332,7 @@ final class JobsTests: XCTestCase {
             try await queue.push(
                 TestParameters(value: 20),
                 options: .init(
-                    priority: .lower()
+                    priority: .lower
                 )
             )
 
@@ -340,7 +340,7 @@ final class JobsTests: XCTestCase {
                 TestParameters(value: 2025),
                 options: .init(
                     delayUntil: Date.now.addingTimeInterval(1),
-                    priority: .higher()
+                    priority: .higher
                 )
             )
 
@@ -717,14 +717,14 @@ final class JobsTests: XCTestCase {
             let resumableJob = try await queue.push(
                 ResumableJob(),
                 options: .init(
-                    priority: .lowest()
+                    priority: .lowest
                 )
             )
 
             try await queue.push(
                 TestParameters(),
                 options: .init(
-                    priority: .normal()
+                    priority: .normal
                 )
             )
 
@@ -793,14 +793,14 @@ final class JobsTests: XCTestCase {
             let cancellableJob = try await queue.push(
                 TestParameters(value: 42),
                 options: .init(
-                    priority: .lower()
+                    priority: .lower
                 )
             )
 
             try await queue.push(
                 NoneCancelledJobParameters(value: 2025),
                 options: .init(
-                    priority: .highest()
+                    priority: .highest
                 )
             )
 
@@ -826,5 +826,64 @@ final class JobsTests: XCTestCase {
         }
         XCTAssertEqual(didRunCancelledJob.withLockedValue { $0 }, false)
         XCTAssertEqual(didRunNoneCancelledJob.withLockedValue { $0 }, true)
+    }
+
+    func testUniqueJobs() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "testUniqueJobs"
+            let value: Int
+        }
+        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 1)
+        let jobValues: NIOLockedValueBox<[Int]> = .init([])
+
+        let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
+
+        try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
+            queue.registerJob(parameters: TestParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                jobValues.withLockedValue {
+                    $0.append(parameters.value)
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.fulfill()
+            }
+
+            do {
+                try await queue.push(
+                    TestParameters(value: 42),
+                    options: .init(
+                        priority: .lower,
+                        deduplicationKey: "unique-key"
+                    )
+                )
+                try await queue.push(
+                    TestParameters(value: 100),
+                    options: .init(
+                        priority: .lower,
+                        deduplicationKey: "unique-key"
+                    )
+                )
+            } catch let error as JobQueueError {
+                XCTAssertEqual(error.code, .unrecognisedJobId)
+            }
+
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
+
+                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                XCTAssertEqual(processingJobs.count, 1)
+
+                group.addTask {
+                    try await serviceGroup.run()
+                }
+
+                await fulfillment(of: [expectation], timeout: 10)
+                let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                XCTAssertEqual(pendingJobs.count, 0)
+
+                await serviceGroup.triggerGracefulShutdown()
+            }
+        }
+        XCTAssertEqual(jobValues.withLockedValue { $0 }, [42])
     }
 }

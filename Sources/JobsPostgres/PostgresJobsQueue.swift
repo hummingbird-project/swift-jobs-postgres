@@ -65,25 +65,15 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             case highest = 4
         }
         /// Lowest priority
-        public static func lowest() -> JobPriority {
-            JobPriority(rawValue: .lowest)
-        }
+        public static let lowest: JobPriority = JobPriority(rawValue: .lowest)
         /// Lower priority
-        public static func lower() -> JobPriority {
-            JobPriority(rawValue: .lower)
-        }
+        public static let lower: JobPriority = JobPriority(rawValue: .lower)
         /// Normal is the default priority
-        public static func normal() -> JobPriority {
-            JobPriority(rawValue: .normal)
-        }
+        public static let normal: JobPriority = JobPriority(rawValue: .normal)
         /// Higher priority
-        public static func higher() -> JobPriority {
-            JobPriority(rawValue: .higher)
-        }
+        public static let higher: JobPriority = JobPriority(rawValue: .higher)
         /// Higgest priority
-        public static func highest() -> JobPriority {
-            JobPriority(rawValue: .highest)
-        }
+        public static let highest: JobPriority = JobPriority(rawValue: .highest)
     }
 
     /// Options for job pushed to queue
@@ -92,26 +82,35 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         public var delayUntil: Date
         /// Priority for this job
         public var priority: JobPriority
+        /// Deduplication Key
+        public var deduplicationKey: String
 
         /// Default initializer for JobOptions
         public init() {
             self.delayUntil = .now
-            self.priority = .normal()
+            self.priority = .normal
+            self.deduplicationKey = UUID().uuidString
         }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         public init(delayUntil: Date?) {
             self.delayUntil = delayUntil ?? .now
-            self.priority = .normal()
+            self.priority = .normal
+            self.deduplicationKey = UUID().uuidString
         }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         /// - Parameter priority: The priority for a job
-        public init(delayUntil: Date = .now, priority: JobPriority = .normal()) {
+        public init(
+            delayUntil: Date = .now,
+            priority: JobPriority = .normal,
+            deduplicationKey: String = UUID().uuidString
+        ) {
             self.delayUntil = delayUntil
             self.priority = priority
+            self.deduplicationKey = deduplicationKey
         }
     }
 
@@ -291,9 +290,28 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     /// - Returns: Identifier of queued job
     @discardableResult public func push<Parameters: JobParameters>(_ jobRequest: JobRequest<Parameters>, options: JobOptions) async throws -> JobID {
         let jobID = JobID()
-        try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.add(jobID: jobID, jobRequest: jobRequest, queueName: configuration.queueName, connection: connection)
-            try await self.addToQueue(jobID: jobID, queueName: configuration.queueName, options: options, connection: connection)
+        let insertedJob = try await self.client.withTransaction(logger: self.logger) { connection in
+            let id = try await self.add(
+                jobID: jobID,
+                jobRequest: jobRequest,
+                queueName: configuration.queueName,
+                deduplicationKey: options.deduplicationKey,
+                connection: connection
+            )
+            // We should never have and empty job id
+            let insertedJobID = id ?? jobID
+            try await self.addToQueue(
+                jobID: insertedJobID,
+                queueName: configuration.queueName,
+                options: options,
+                connection: connection
+            )
+            return insertedJobID
+        }
+        
+        if insertedJob != jobID {
+            // TODO: introduce a duplicate jobID error
+            throw JobQueueError(code: .unrecognisedJobId, jobName: Parameters.jobName)
         }
         return jobID
     }
@@ -452,14 +470,23 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         }
     }
 
-    func add<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, queueName: String, connection: PostgresConnection) async throws {
-        try await connection.query(
+    func add<Parameters>(
+        jobID: JobID,
+        jobRequest: JobRequest<Parameters>,
+        queueName: String,
+        deduplicationKey: String,
+        connection: PostgresConnection
+    ) async throws -> JobID? {
+        let stream = try await connection.query(
             """
-            INSERT INTO swift_jobs.jobs (id, job, status, queue_name)
-            VALUES (\(jobID), \(jobRequest), \(Status.pending), \(queueName))
+            INSERT INTO swift_jobs.jobs (id, job, status, queue_name, unique_key)
+            VALUES (\(jobID), \(jobRequest), \(Status.pending), \(queueName), \(deduplicationKey))
+            ON CONFLICT DO NOTHING
+            RETURNING id
             """,
             logger: self.logger
         )
+        return try await stream.decode(JobID.self).first(where: { _ in true })
     }
     // TODO: maybe add a new column colum for attempt so far after PR https://github.com/hummingbird-project/swift-jobs/pull/63 is merged?
     func updateJob(id: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
