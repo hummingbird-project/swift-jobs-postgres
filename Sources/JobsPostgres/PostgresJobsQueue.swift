@@ -465,7 +465,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     }
 
     func processDataRetentionPolicy() async throws {
-       try await withThrowingTaskGroup(of: Void.self) { group in
+        try await withThrowingTaskGroup(of: Void.self) { group in
             try await self.client.withTransaction(logger: logger) { tx in
                 let now = Date.now.timeIntervalSince1970
                 let retentionPolicy = configuration.retentionPolicy
