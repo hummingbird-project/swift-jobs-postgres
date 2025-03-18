@@ -124,6 +124,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         case failed = 2
         case cancelled = 3
         case paused = 4
+        case completed = 5
     }
 
     /// Queue configuration
@@ -143,10 +144,10 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             pollTime: Duration = .milliseconds(100),
             queueName: String = "default",
             retentionPolicy: RetentionPolicy = .init(
-                canceled: .init(duration: "7D"),
-                completed: .init(duration: "7D"),
-                failed: .init(duration: "7D")
-            ) //.keepAll()
+                cancelled: .init(duration: 7 * 24 * 60),
+                completed: .init(duration: 7 * 24 * 60),
+                failed: .init(duration: 7 * 24 * 60)
+            )
         ) {
             self.pollTime = pollTime
             self.queueName = queueName
@@ -192,8 +193,9 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     public func cancel(jobID: JobID) async throws {
         try await self.client.withTransaction(logger: logger) { connection in
             try await deleteFromQueue(jobID: jobID, connection: connection)
-            try await delete(jobID: jobID)
+            try await setStatus(jobID: jobID, status: .cancelled, connection: connection)
         }
+        try await processDataRetentionPolicy()
     }
 
     ///  Pause job
@@ -298,15 +300,15 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// Retry an existing Job
     /// - Parameters
-    ///   - id: Job instance ID
+    ///   - jobID: Job instance ID
     ///   - jobRequest: Job Request
     ///   - options: Job retry options
-    public func retry<Parameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
+    public func retry<Parameters>(_ jobID: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.updateJob(id: id, buffer: buffer, connection: connection)
+            try await self.updateJob(jobID: jobID, buffer: buffer, connection: connection)
             try await self.addToQueue(
-                jobID: id,
+                jobID: jobID,
                 queueName: configuration.queueName,
                 options: .init(delayUntil: options.delayUntil),
                 connection: connection
@@ -316,7 +318,9 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// This is called to say job has finished processing and it can be deleted
     public func finished(jobID: JobID) async throws {
-        try await self.delete(jobID: jobID)
+        //try await self.delete(jobID: jobID)
+        try await self.setStatus(jobID: jobID, status: .completed)
+        try await processDataRetentionPolicy()
     }
 
     /// This is called to say job has failed to run and should be put aside
@@ -459,15 +463,59 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             logger: self.logger
         )
     }
-    // TODO: maybe add a new column colum for attempt so far after PR https://github.com/hummingbird-project/swift-jobs/pull/63 is merged?
-    func updateJob(id: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
+
+    func processDataRetentionPolicy() async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            try await self.client.withTransaction(logger: logger) { tx in
+                let now = Date.now.timeIntervalSince1970
+                let retentionPolicy = configuration.retentionPolicy
+                /// process // cancelled events
+                group.addTask {
+                    try await tx.query(
+                        """
+                        DELETE FROM swift_jobs.jobs
+                        WHERE status = \(Status.cancelled)
+                        AND extract(epoch FROM last_modified)::int + \(retentionPolicy.cancelled.duration) < \(now)
+                        """,
+                        logger: self.logger
+                    )
+                }
+
+                /// process failed events clean up
+                group.addTask {
+                    try await tx.query(
+                        """
+                        DELETE FROM swift_jobs.jobs
+                        WHERE status = \(Status.failed)
+                        AND extract(epoch FROM last_modified)::int + \(retentionPolicy.failed.duration) < \(now)
+                        """,
+                        logger: self.logger
+                    )
+                }
+
+                /// process completed events
+                group.addTask {
+                    try await tx.query(
+                        """
+                        DELETE FROM swift_jobs.jobs
+                        WHERE status = \(Status.completed)
+                        AND extract(epoch FROM last_modified)::int + \(retentionPolicy.completed.duration) < \(now)
+                        """,
+                        logger: self.logger
+                    )
+                }
+            }
+        }
+    }
+
+    func updateJob(jobID: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
         try await connection.query(
             """
             UPDATE swift_jobs.jobs
             SET job = \(buffer),
                 last_modified = \(Date.now),
                 status = \(Status.failed)
-            WHERE id = \(id) AND queue_name = \(configuration.queueName)
+            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
             """,
             logger: self.logger
         )
