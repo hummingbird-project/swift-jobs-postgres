@@ -32,7 +32,7 @@ public struct RetentionPolicy: Sendable {
     public var completed: RetainData
     /// Jobs with status failed
     public var failed: RetainData
-    
+
     public init(cancelled: RetainData, completed: RetainData, failed: RetainData) {
         self.cancelled = cancelled
         self.completed = completed
