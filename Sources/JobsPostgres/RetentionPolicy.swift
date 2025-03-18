@@ -1,35 +1,40 @@
+//===----------------------------------------------------------------------===//
 //
-//  RetentionPolicy.swift
-//  swift-jobs-postgres
+// This source file is part of the Hummingbird server framework project
 //
-//  Created by Stevenson Michel on 3/15/25.
+// Copyright (c) 2025 the Hummingbird authors
+// Licensed under Apache License v2.0
 //
+// See LICENSE.txt for license information
+// See hummingbird/CONTRIBUTORS.txt for the list of Hummingbird authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//
 
+import Foundation
+
+/// Data rentension policy
 public struct RetentionPolicy: Sendable {
-    
+    /// Data retention
     public struct RetainData: Sendable {
-        /// Duration in ISO 8601 format (e.g., "P30D" for 30 days)
-        public var duration: String
-        
-        public init(duration: String) {
+        /// Duration
+        public var duration: TimeInterval
+
+        public init(duration: TimeInterval) {
             self.duration = duration
         }
     }
-    
-//    public var days: Int
-//    
-//    public init(days: Int) {
-//        self.days = days
-//    }
+
     /// Jobs with status cancelled
-    public var canceled: RetainData
+    public var cancelled: RetainData
     /// Jobs with status completed
     public var completed: RetainData
     /// Jobs with status failed
     public var failed: RetainData
     
-    public init(canceled: RetainData, completed: RetainData, failed: RetainData) {
-        self.canceled = canceled
+    public init(cancelled: RetainData, completed: RetainData, failed: RetainData) {
+        self.cancelled = cancelled
         self.completed = completed
         self.failed = failed
     }

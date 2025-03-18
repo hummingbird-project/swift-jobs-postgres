@@ -178,10 +178,15 @@ final class JobsTests: XCTestCase {
         processingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         pendingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         revertMigrations: Bool = true,
+        configuration: PostgresJobQueue.Configuration = .init(),
         function: String = #function,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
     ) async throws -> T {
-        let jobQueue = try await self.createJobQueue(numWorkers: numWorkers, configuration: .init(), function: function)
+        let jobQueue = try await self.createJobQueue(
+            numWorkers: numWorkers,
+            configuration: configuration,
+            function: function
+        )
         return try await self.testJobQueue(
             jobQueue: jobQueue,
             failedJobsInitialization: failedJobsInitialization,
@@ -490,7 +495,16 @@ final class JobsTests: XCTestCase {
         }
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 1)
 
-        try await self.testJobQueue(numWorkers: 4) { jobQueue in
+        try await self.testJobQueue(
+            numWorkers: 4,
+            configuration: .init(
+                retentionPolicy: .init(
+                    cancelled: .init(duration: -1),
+                    completed: .init(duration: -1),
+                    failed: .init(duration: -1)
+                )
+            )
+        ) { jobQueue in
             jobQueue.registerJob(parameters: TestParameters.self) { _, _ in
                 expectation.fulfill()
                 try await Task.sleep(for: .milliseconds(1000))
@@ -769,7 +783,17 @@ final class JobsTests: XCTestCase {
         let didRunCancelledJob: NIOLockedValueBox<Bool> = .init(false)
         let didRunNoneCancelledJob: NIOLockedValueBox<Bool> = .init(false)
 
-        let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
+        let jobQueue = try await self.createJobQueue(
+            numWorkers: 1,
+            configuration: .init(
+                retentionPolicy: .init(
+                    cancelled: .init(duration: -1),
+                    completed: .init(duration: -1),
+                    failed: .init(duration: -1)
+                )
+            ),
+            function: #function
+        )
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, context in
@@ -826,5 +850,31 @@ final class JobsTests: XCTestCase {
         }
         XCTAssertEqual(didRunCancelledJob.withLockedValue { $0 }, false)
         XCTAssertEqual(didRunNoneCancelledJob.withLockedValue { $0 }, true)
+    }
+
+    func testJobRetention() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "testJobRetention"
+            let value: Int
+        }
+        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 3)
+        try await self.testJobQueue(numWorkers: 1) { jobQueue in
+            jobQueue.registerJob(parameters: TestParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.fulfill()
+            }
+            let firstJob = try await jobQueue.push(TestParameters(value: 1))
+            let secondJob = try await jobQueue.push(TestParameters(value: 2))
+            let thirdJob = try await jobQueue.push(TestParameters(value: 3))
+
+            await fulfillment(of: [expectation], timeout: 5)
+
+            let completedJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
+            XCTAssertEqual(completedJobs.count, 3)
+            try await jobQueue.queue.delete(jobID: firstJob)
+            try await jobQueue.queue.delete(jobID: secondJob)
+            try await jobQueue.queue.delete(jobID: thirdJob)
+        }
     }
 }
