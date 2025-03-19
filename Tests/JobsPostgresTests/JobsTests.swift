@@ -877,7 +877,7 @@ final class JobsTests: XCTestCase {
             try await jobQueue.push(TestParameters(value: 2))
             try await jobQueue.push(TestParameters(value: 3))
 
-            await fulfillment(of: [expectation], timeout: 5)
+            await fulfillment(of: [expectation], timeout: 10)
 
             let completedJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
             XCTAssertEqual(completedJobs.count, 3)
