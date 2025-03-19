@@ -499,9 +499,9 @@ final class JobsTests: XCTestCase {
             numWorkers: 4,
             configuration: .init(
                 retentionPolicy: .init(
-                    cancelled: .init(duration: -1),
-                    completed: .init(duration: -1),
-                    failed: .init(duration: -1)
+                    cancelled: .never,
+                    completed: .never,
+                    failed: .never
                 )
             )
         ) { jobQueue in
@@ -787,9 +787,9 @@ final class JobsTests: XCTestCase {
             numWorkers: 1,
             configuration: .init(
                 retentionPolicy: .init(
-                    cancelled: .init(duration: -1),
-                    completed: .init(duration: -1),
-                    failed: .init(duration: -1)
+                    cancelled: .never,
+                    completed: .never,
+                    failed: .never
                 )
             ),
             function: #function
@@ -858,23 +858,30 @@ final class JobsTests: XCTestCase {
             let value: Int
         }
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 3)
-        try await self.testJobQueue(numWorkers: 1) { jobQueue in
+        try await self.testJobQueue(
+            numWorkers: 1,
+            configuration: .init(
+                retentionPolicy: .init(
+                    cancelled: .retain(for: -1),
+                    completed: .retain(for: -1),
+                    failed: .retain(for: -1)
+                )
+            )
+        ) { jobQueue in
             jobQueue.registerJob(parameters: TestParameters.self) { parameters, context in
                 context.logger.info("Parameters=\(parameters.value)")
                 try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
                 expectation.fulfill()
             }
-            let firstJob = try await jobQueue.push(TestParameters(value: 1))
-            let secondJob = try await jobQueue.push(TestParameters(value: 2))
-            let thirdJob = try await jobQueue.push(TestParameters(value: 3))
+            try await jobQueue.push(TestParameters(value: 1))
+            try await jobQueue.push(TestParameters(value: 2))
+            try await jobQueue.push(TestParameters(value: 3))
 
             await fulfillment(of: [expectation], timeout: 5)
 
             let completedJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
             XCTAssertEqual(completedJobs.count, 3)
-            try await jobQueue.queue.delete(jobID: firstJob)
-            try await jobQueue.queue.delete(jobID: secondJob)
-            try await jobQueue.queue.delete(jobID: thirdJob)
+            try await jobQueue.queue.processDataRetentionPolicy()
         }
     }
 }
