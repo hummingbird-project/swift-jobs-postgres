@@ -65,25 +65,15 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             case highest = 4
         }
         /// Lowest priority
-        public static func lowest() -> JobPriority {
-            JobPriority(rawValue: .lowest)
-        }
+        public static let lowest: JobPriority = JobPriority(rawValue: .lowest)
         /// Lower priority
-        public static func lower() -> JobPriority {
-            JobPriority(rawValue: .lower)
-        }
+        public static let lower: JobPriority = JobPriority(rawValue: .lower)
         /// Normal is the default priority
-        public static func normal() -> JobPriority {
-            JobPriority(rawValue: .normal)
-        }
+        public static let normal: JobPriority = JobPriority(rawValue: .normal)
         /// Higher priority
-        public static func higher() -> JobPriority {
-            JobPriority(rawValue: .higher)
-        }
+        public static let higher: JobPriority = JobPriority(rawValue: .higher)
         /// Higgest priority
-        public static func highest() -> JobPriority {
-            JobPriority(rawValue: .highest)
-        }
+        public static let highest: JobPriority = JobPriority(rawValue: .highest)
     }
 
     /// Options for job pushed to queue
@@ -96,20 +86,20 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         /// Default initializer for JobOptions
         public init() {
             self.delayUntil = .now
-            self.priority = .normal()
+            self.priority = .normal
         }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         public init(delayUntil: Date?) {
             self.delayUntil = delayUntil ?? .now
-            self.priority = .normal()
+            self.priority = .normal
         }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
         /// - Parameter priority: The priority for a job
-        public init(delayUntil: Date = .now, priority: JobPriority = .normal()) {
+        public init(delayUntil: Date = .now, priority: JobPriority = .normal) {
             self.delayUntil = delayUntil
             self.priority = priority
         }
@@ -134,6 +124,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         case failed = 2
         case cancelled = 3
         case paused = 4
+        case completed = 5
     }
 
     /// Queue configuration
@@ -142,6 +133,8 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         let pollTime: Duration
         /// Which Queue to push jobs into
         let queueName: String
+        /// Retention policy for jobs
+        let retentionPolicy: RetentionPolicy
 
         ///  Initialize configuration
         /// - Parameters
@@ -149,10 +142,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         ///   - queueName: Name of queue we are handing
         public init(
             pollTime: Duration = .milliseconds(100),
-            queueName: String = "default"
+            queueName: String = "default",
+            retentionPolicy: RetentionPolicy = .init()
         ) {
             self.pollTime = pollTime
             self.queueName = queueName
+            self.retentionPolicy = retentionPolicy
         }
     }
 
@@ -194,7 +189,11 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     public func cancel(jobID: JobID) async throws {
         try await self.client.withTransaction(logger: logger) { connection in
             try await deleteFromQueue(jobID: jobID, connection: connection)
-            try await delete(jobID: jobID)
+            if configuration.retentionPolicy.cancelled == .never {
+                try await delete(jobID: jobID)
+            } else {
+                try await setStatus(jobID: jobID, status: .cancelled, connection: connection)
+            }
         }
     }
 
@@ -300,15 +299,15 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// Retry an existing Job
     /// - Parameters
-    ///   - id: Job instance ID
+    ///   - jobID: Job instance ID
     ///   - jobRequest: Job Request
     ///   - options: Job retry options
-    public func retry<Parameters: JobParameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
+    public func retry<Parameters: JobParameters>(_ jobID: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.updateJob(id: id, buffer: buffer, connection: connection)
+            try await self.updateJob(jobID: jobID, buffer: buffer, connection: connection)
             try await self.addToQueue(
-                jobID: id,
+                jobID: jobID,
                 queueName: configuration.queueName,
                 options: .init(delayUntil: options.delayUntil),
                 connection: connection
@@ -318,12 +317,20 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// This is called to say job has finished processing and it can be deleted
     public func finished(jobID: JobID) async throws {
-        try await self.delete(jobID: jobID)
+        if configuration.retentionPolicy.completed == .never {
+            try await self.delete(jobID: jobID)
+        } else {
+            try await self.setStatus(jobID: jobID, status: .completed)
+        }
     }
 
     /// This is called to say job has failed to run and should be put aside
     public func failed(jobID: JobID, error: Error) async throws {
-        try await self.setStatus(jobID: jobID, status: .failed)
+        if configuration.retentionPolicy.failed == .never {
+            try await self.delete(jobID: jobID)
+        } else {
+            try await self.setStatus(jobID: jobID, status: .failed)
+        }
     }
 
     /// stop serving jobs
@@ -461,15 +468,56 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             logger: self.logger
         )
     }
-    // TODO: maybe add a new column colum for attempt so far after PR https://github.com/hummingbird-project/swift-jobs/pull/63 is merged?
-    func updateJob(id: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
+    /// Helper func which to be use by a scheduled jobs
+    /// for performing job clean up based on a given set of policies
+    public func processDataRetentionPolicy() async throws {
+        try await self.client.withTransaction(logger: logger) { tx in
+            let now = Date.now.timeIntervalSince1970
+            let retentionPolicy: RetentionPolicy = configuration.retentionPolicy
+
+            if case let .retain(timeAmout) = retentionPolicy.cancelled.rawValue {
+                try await tx.query(
+                    """
+                    DELETE FROM swift_jobs.jobs
+                    WHERE status = \(Status.cancelled)
+                    AND extract(epoch FROM last_modified)::int + \(timeAmout) < \(now)
+                    """,
+                    logger: self.logger
+                )
+            }
+
+            if case let .retain(timeAmout) = retentionPolicy.completed.rawValue {
+                try await tx.query(
+                    """
+                    DELETE FROM swift_jobs.jobs
+                    WHERE status = \(Status.completed)
+                    AND extract(epoch FROM last_modified)::int + \(timeAmout) < \(now)
+                    """,
+                    logger: self.logger
+                )
+            }
+
+            if case let .retain(timeAmout) = retentionPolicy.failed.rawValue {
+                try await tx.query(
+                    """
+                    DELETE FROM swift_jobs.jobs
+                    WHERE status = \(Status.failed)
+                    AND extract(epoch FROM last_modified)::int + \(timeAmout) < \(now)
+                    """,
+                    logger: self.logger
+                )
+            }
+        }
+    }
+
+    func updateJob(jobID: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
         try await connection.query(
             """
             UPDATE swift_jobs.jobs
             SET job = \(buffer),
                 last_modified = \(Date.now),
                 status = \(Status.failed)
-            WHERE id = \(id) AND queue_name = \(configuration.queueName)
+            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
             """,
             logger: self.logger
         )
