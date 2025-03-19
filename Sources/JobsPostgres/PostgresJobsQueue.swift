@@ -470,7 +470,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     }
     /// Helper func which to be use by a scheduled jobs
     /// for performing job clean up based on a given set of policies
-    public func processDataRetentionPolicies() async throws {
+    public func processDataRetentionPolicy() async throws {
         try await self.client.withTransaction(logger: logger) { tx in
             let now = Date.now.timeIntervalSince1970
             let retentionPolicy: RetentionPolicy = configuration.retentionPolicy
