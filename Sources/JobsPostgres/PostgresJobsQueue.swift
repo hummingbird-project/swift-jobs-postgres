@@ -143,11 +143,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         public init(
             pollTime: Duration = .milliseconds(100),
             queueName: String = "default",
-            retentionPolicy: RetentionPolicy = .init(
-                cancelled: .init(duration: 7 * 24 * 60),
-                completed: .init(duration: 7 * 24 * 60),
-                failed: .init(duration: 7 * 24 * 60)
-            )
+            retentionPolicy: RetentionPolicy = .init()
         ) {
             self.pollTime = pollTime
             self.queueName = queueName
@@ -193,9 +189,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     public func cancel(jobID: JobID) async throws {
         try await self.client.withTransaction(logger: logger) { connection in
             try await deleteFromQueue(jobID: jobID, connection: connection)
-            try await setStatus(jobID: jobID, status: .cancelled, connection: connection)
+            if configuration.retentionPolicy.cancelled == .never {
+                try await delete(jobID: jobID)
+            } else {
+                try await setStatus(jobID: jobID, status: .cancelled, connection: connection)
+            }
         }
-        try await processDataRetentionPolicy()
     }
 
     ///  Pause job
@@ -318,14 +317,20 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// This is called to say job has finished processing and it can be deleted
     public func finished(jobID: JobID) async throws {
-        //try await self.delete(jobID: jobID)
-        try await self.setStatus(jobID: jobID, status: .completed)
-        try await processDataRetentionPolicy()
+        if configuration.retentionPolicy.completed == .never {
+            try await self.delete(jobID: jobID)
+        } else {
+            try await self.setStatus(jobID: jobID, status: .completed)
+        }
     }
 
     /// This is called to say job has failed to run and should be put aside
     public func failed(jobID: JobID, error: Error) async throws {
-        try await self.setStatus(jobID: jobID, status: .failed)
+        if configuration.retentionPolicy.failed == .never {
+            try await self.delete(jobID: jobID)
+        } else {
+            try await self.setStatus(jobID: jobID, status: .failed)
+        }
     }
 
     /// stop serving jobs
@@ -463,47 +468,44 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             logger: self.logger
         )
     }
+    /// Helper func which to be use by a scheduled jobs
+    /// for performing job clean up based on a given set of policies
+    public func processDataRetentionPolicies() async throws {
+        try await self.client.withTransaction(logger: logger) { tx in
+            let now = Date.now.timeIntervalSince1970
+            let retentionPolicy: RetentionPolicy = configuration.retentionPolicy
 
-    func processDataRetentionPolicy() async throws {
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            try await self.client.withTransaction(logger: logger) { tx in
-                let now = Date.now.timeIntervalSince1970
-                let retentionPolicy = configuration.retentionPolicy
-                /// process // cancelled events
-                group.addTask {
-                    try await tx.query(
-                        """
-                        DELETE FROM swift_jobs.jobs
-                        WHERE status = \(Status.cancelled)
-                        AND extract(epoch FROM last_modified)::int + \(retentionPolicy.cancelled.duration) < \(now)
-                        """,
-                        logger: self.logger
-                    )
-                }
+            if case let .retain(timeAmout) = retentionPolicy.cancelled.rawValue {
+                try await tx.query(
+                    """
+                    DELETE FROM swift_jobs.jobs
+                    WHERE status = \(Status.cancelled)
+                    AND extract(epoch FROM last_modified)::int + \(timeAmout) < \(now)
+                    """,
+                    logger: self.logger
+                )
+            }
 
-                /// process failed events clean up
-                group.addTask {
-                    try await tx.query(
-                        """
-                        DELETE FROM swift_jobs.jobs
-                        WHERE status = \(Status.failed)
-                        AND extract(epoch FROM last_modified)::int + \(retentionPolicy.failed.duration) < \(now)
-                        """,
-                        logger: self.logger
-                    )
-                }
+            if case let .retain(timeAmout) = retentionPolicy.completed.rawValue {
+                try await tx.query(
+                    """
+                    DELETE FROM swift_jobs.jobs
+                    WHERE status = \(Status.completed)
+                    AND extract(epoch FROM last_modified)::int + \(timeAmout) < \(now)
+                    """,
+                    logger: self.logger
+                )
+            }
 
-                /// process completed events
-                group.addTask {
-                    try await tx.query(
-                        """
-                        DELETE FROM swift_jobs.jobs
-                        WHERE status = \(Status.completed)
-                        AND extract(epoch FROM last_modified)::int + \(retentionPolicy.completed.duration) < \(now)
-                        """,
-                        logger: self.logger
-                    )
-                }
+            if case let .retain(timeAmout) = retentionPolicy.failed.rawValue {
+                try await tx.query(
+                    """
+                    DELETE FROM swift_jobs.jobs
+                    WHERE status = \(Status.failed)
+                    AND extract(epoch FROM last_modified)::int + \(timeAmout) < \(now)
+                    """,
+                    logger: self.logger
+                )
             }
         }
     }
