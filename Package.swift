@@ -11,14 +11,14 @@ let package = Package(
     dependencies: [
         // TODO: use a released version of swift-jobs
         .package(url: "https://github.com/hummingbird-project/swift-jobs.git", branch: "main"),
-        .package(url: "https://github.com/hummingbird-project/hummingbird-postgres.git", from: "0.6.0"),
+        .package(url: "https://github.com/hummingbird-project/postgres-migrations.git", from: "0.1.0"),
         .package(url: "https://github.com/vapor/postgres-nio.git", from: "1.25.0"),
     ],
     targets: [
         .target(
             name: "JobsPostgres",
             dependencies: [
-                .product(name: "PostgresMigrations", package: "hummingbird-postgres"),
+                .product(name: "PostgresMigrations", package: "postgres-migrations"),
                 .product(name: "Jobs", package: "swift-jobs"),
                 .product(name: "PostgresNIO", package: "postgres-nio"),
             ]
