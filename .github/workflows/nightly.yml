@@ -10,17 +10,35 @@ jobs:
     strategy:
       matrix:
         image: ['nightly-focal', 'nightly-jammy', 'nightly-amazonlinux2']
-    services:
-      redis:
-        image: redis
-        ports:
-          - 6379:6379
-        options: --entrypoint redis-server
+        postgres-image:
+            - "postgres:17"
+            - "postgres:14"
+        include:
+            - postgres-image: postgres:17
+              postgres-auth: scram-sha-256
+            - postgres-image: postgres:14
+              postgres-auth: md5
 
     container:
       image: swiftlang/swift:${{ matrix.image }}
+      volumes: ["pgrunshare:/var/run/postgresql"]
       env:
-        REDIS_HOSTNAME: "redis"
+          POSTGRES_DB: "test_database"
+          POSTGRES_USER: "test_user"
+          POSTGRES_PASSWORD: "test_password"
+          POSTGRES_HOSTNAME: "psql"
+          POSTGRES_SOCKET: "/var/run/postgresql/.s.PGSQL.5432"
+          POSTGRES_HOST_AUTH_METHOD: ${{ matrix.postgres-auth }}
+    services:
+        psql:
+            image: ${{ matrix.postgres-image }}
+            volumes: ["pgrunshare:/var/run/postgresql"]
+            env:
+                POSTGRES_DB: "test_database"
+                POSTGRES_USER: "test_user"
+                POSTGRES_PASSWORD: "test_password"
+                POSTGRES_HOST_AUTH_METHOD: ${{ matrix.postgres-auth }}
+                POSTGRES_INITDB_ARGS: --auth-host=${{ matrix.postgres-auth }}
 
     steps:
     - name: Checkout
