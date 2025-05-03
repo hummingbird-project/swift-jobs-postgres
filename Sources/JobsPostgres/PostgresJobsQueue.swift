@@ -132,6 +132,8 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         let pollTime: Duration
         /// Which Queue to push jobs into
         let queueName: String
+        /// Lock value to use for quorum
+        let lockValue: Int64
 
         ///  Initialize configuration
         /// - Parameters
@@ -139,10 +141,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         ///   - queueName: Name of queue we are handing
         public init(
             pollTime: Duration = .milliseconds(100),
+            lockValue: Int64 = 42,
             queueName: String = "default"
         ) {
             self.pollTime = pollTime
             self.queueName = queueName
+            self.lockValue = lockValue
         }
     }
 
@@ -155,6 +159,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     let migrations: DatabaseMigrations
     let isStopped: NIOLockedValueBox<Bool>
+    let didElectAsLeader: NIOLockedValueBox<Bool>
 
     /// Initialize a PostgresJobQueue
     public init(client: PostgresClient, migrations: DatabaseMigrations, configuration: Configuration = .init(), logger: Logger) async {
@@ -165,6 +170,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         self.isStopped = .init(false)
         self.migrations = migrations
         await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
+        self.didElectAsLeader = .init(false)
     }
 
     public func onInit() async throws {
@@ -561,6 +567,35 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         }
     }
 
+    func electAsLeader() async throws {
+        let stream = try await client.query("SELECT pg_try_advisory_lock(\(configuration.lockValue));", logger: self.logger)
+        let didElect = try await stream.decode(Bool.self, context: .default).first { _ in true } ?? false
+
+        didElectAsLeader.withLockedValue {
+            $0 = didElect
+        }
+
+        if !didElect {
+            self.logger.debug(
+                "Not elected as leader.",
+                metadata: [
+                    "lockValue": "\(configuration.lockValue)"
+                ]
+            )
+        } else {
+            self.logger.debug(
+                "Elected as leader.",
+                metadata: [
+                    "lockValue": "\(configuration.lockValue)"
+                ]
+            )
+        }
+    }
+
+    public func isLeader() async -> Bool {
+        didElectAsLeader.withLockedValue { $0 }
+    }
+
     let jobRegistry: JobRegistry
 }
 
@@ -576,6 +611,8 @@ extension PostgresJobQueue {
                 if self.queue.isStopped.withLockedValue({ $0 }) {
                     return nil
                 }
+                // The first node to aquire the lock will be the leader
+                try await queue.electAsLeader()
 
                 if let job = try await queue.popFirst() {
                     return job
