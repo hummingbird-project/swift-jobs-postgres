@@ -567,7 +567,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         }
     }
 
-    func electAsLeader() async throws {
+    public func electLeaderShip() async throws {
         let stream = try await client.query("SELECT pg_try_advisory_lock(\(configuration.lockValue));", logger: self.logger)
         let didElect = try await stream.decode(Bool.self, context: .default).first { _ in true } ?? false
 
@@ -611,9 +611,6 @@ extension PostgresJobQueue {
                 if self.queue.isStopped.withLockedValue({ $0 }) {
                     return nil
                 }
-                // The first node to aquire the lock will be the leader
-                try await queue.electAsLeader()
-
                 if let job = try await queue.popFirst() {
                     return job
                 }

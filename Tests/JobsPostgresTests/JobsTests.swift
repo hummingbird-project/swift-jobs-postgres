@@ -215,8 +215,6 @@ final class JobsTests: XCTestCase {
             try await jobQueue.push(TestParameters(value: 9))
             try await jobQueue.push(TestParameters(value: 10))
 
-            let isLeader = try await jobQueue.queue.isLeader()
-            XCTAssertTrue(isLeader)
             await fulfillment(of: [expectation], timeout: 5)
         }
     }
