@@ -468,8 +468,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             logger: self.logger
         )
     }
-    /// Helper func which to be use by a scheduled jobs
-    /// for performing job clean up based on a given set of policies
+
+    /// This menthod shall be called with the JobPruner after registration as follow
+    /// someJobQueue.registerJobparameters: JobPruner.self)  { _, _ in
+    ///     try await someJobQueue.processDataRetentionPolicy()
+    /// }
+    /// let jobScheddule  = JobSchedule([ .init(job: JobPruner(), schedule: .everyHour()) ])
     public func processDataRetentionPolicy() async throws {
         try await self.client.withTransaction(logger: logger) { tx in
             let now = Date.now.timeIntervalSince1970
