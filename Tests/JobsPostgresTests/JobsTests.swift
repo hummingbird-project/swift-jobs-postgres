@@ -862,9 +862,9 @@ final class JobsTests: XCTestCase {
             numWorkers: 1,
             configuration: .init(
                 retentionPolicy: .init(
-                    cancelled: .retain(for: -1),
-                    completed: .retain(for: -1),
-                    failed: .retain(for: -1)
+                    cancelled: .retain(for: 1),
+                    completed: .retain(for: 1),
+                    failed: .retain(for: 1)
                 )
             )
         ) { jobQueue in
