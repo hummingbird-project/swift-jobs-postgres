@@ -859,14 +859,7 @@ final class JobsTests: XCTestCase {
         }
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 3)
         try await self.testJobQueue(
-            numWorkers: 1,
-            configuration: .init(
-                retentionPolicy: .init(
-                    cancelled: .retain(for: 1),
-                    completed: .retain(for: 1),
-                    failed: .retain(for: 1)
-                )
-            )
+            numWorkers: 1
         ) { jobQueue in
             jobQueue.registerJob(parameters: TestParameters.self) { parameters, context in
                 context.logger.info("Parameters=\(parameters.value)")
