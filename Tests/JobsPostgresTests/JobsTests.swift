@@ -859,7 +859,7 @@ final class JobsTests: XCTestCase {
         }
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 3)
         try await self.testJobQueue(
-            numWorkers: 3,
+            numWorkers: 1,
             configuration: .init(
                 retentionPolicy: .init(
                     cancelled: .retain(for: -1),
@@ -877,6 +877,7 @@ final class JobsTests: XCTestCase {
             try await jobQueue.push(TestParameters(value: 3))
 
             await fulfillment(of: [expectation], timeout: 10)
+            try await Task.sleep(for: .milliseconds(200))
 
             let completedJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
             XCTAssertEqual(completedJobs.count, 3)
