@@ -862,9 +862,9 @@ final class JobsTests: XCTestCase {
             numWorkers: 1,
             configuration: .init(
                 retentionPolicy: .init(
-                    cancelled: .retain(for: -1),
-                    completed: .retain(for: -1),
-                    failed: .retain(for: -1)
+                    cancelled: .retain,
+                    completed: .retain,
+                    failed: .retain
                 )
             )
         ) { jobQueue in
@@ -881,7 +881,7 @@ final class JobsTests: XCTestCase {
 
             let completedJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
             XCTAssertEqual(completedJobs.count, 3)
-            try await jobQueue.queue.processDataRetentionPolicy()
+            try await jobQueue.queue.cleanup(completedJobs: .remove(maxAge: .seconds(0)))
             let zeroJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
             XCTAssertEqual(zeroJobs.count, 0)
         }
