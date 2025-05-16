@@ -180,7 +180,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
         self.registerJob(
             JobDefinition(parameters: JobCleanupParameters.self, retryStrategy: .dontRetry) { parameters, context in
-                parameters.jobQueue.cleanup(
+                try await self.cleanup(
                     failedJobs: parameters.failedJobs,
                     processingJobs: .doNothing,
                     pendingJobs: .doNothing,

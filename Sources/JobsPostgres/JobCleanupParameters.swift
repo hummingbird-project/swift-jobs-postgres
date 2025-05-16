@@ -17,18 +17,15 @@ import Jobs
 public struct JobCleanupParameters: JobParameters {
     static public var jobName: String { "_JobCleanup_" }
 
-    let jobQueueName: String
     let failedJobs: PostgresJobQueue.JobCleanup
     let completedJobs: PostgresJobQueue.JobCleanup
     let cancelledJobs: PostgresJobQueue.JobCleanup
 
     public init(
-        jobQueueName: String,
         failedJobs: PostgresJobQueue.JobCleanup = .doNothing,
         completedJobs: PostgresJobQueue.JobCleanup = .doNothing,
         cancelledJobs: PostgresJobQueue.JobCleanup = .doNothing
     ) {
-        self.jobQueueName = jobQueueName
         self.failedJobs = failedJobs
         self.completedJobs = completedJobs
         self.cancelledJobs = cancelledJobs
