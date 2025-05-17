@@ -20,7 +20,48 @@ import NIOCore
 import PostgresMigrations
 import PostgresNIO
 
+/// Parameters for Cleanup job
+public struct JobCleanupParameters: Sendable & Codable {
+    let failedJobs: PostgresJobQueue.JobCleanup
+    let completedJobs: PostgresJobQueue.JobCleanup
+    let cancelledJobs: PostgresJobQueue.JobCleanup
+
+    public init(
+        failedJobs: PostgresJobQueue.JobCleanup = .doNothing,
+        completedJobs: PostgresJobQueue.JobCleanup = .doNothing,
+        cancelledJobs: PostgresJobQueue.JobCleanup = .doNothing
+    ) {
+        self.failedJobs = failedJobs
+        self.completedJobs = completedJobs
+        self.cancelledJobs = cancelledJobs
+    }
+}
+
 extension PostgresJobQueue {
+    /// clean up job name.
+    ///
+    /// Use this with the ``JobSchedule`` to schedule a cleanup of
+    /// failed, cancelled or completed jobs
+    public var cleanupJob: JobName<JobCleanupParameters> {
+        .init("_JobCleanup_\(self.configuration.queueName)")
+    }
+
+    /// register clean up job on queue
+    func registerCleanupJob() {
+        self.registerJob(
+            JobDefinition(name: cleanupJob, parameters: JobCleanupParameters.self, retryStrategy: .dontRetry) { parameters, context in
+                try await self.cleanup(
+                    failedJobs: parameters.failedJobs,
+                    processingJobs: .doNothing,
+                    pendingJobs: .doNothing,
+                    completedJobs: parameters.completedJobs,
+                    cancelledJobs: parameters.cancelledJobs,
+                    logger: self.logger
+                )
+            }
+        )
+    }
+
     ///  Cleanup job queues
     ///
     /// This function is used to re-run or delete jobs in a certain state. Failed jobs can be
@@ -80,7 +121,7 @@ extension PostgresJobQueue {
                 if let olderThan {
                     .now - Double(olderThan.components.seconds)
                 } else {
-                    .distantPast
+                    .distantFuture
                 }
             try await connection.query(
                 """

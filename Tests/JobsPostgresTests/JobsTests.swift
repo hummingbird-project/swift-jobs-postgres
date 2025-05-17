@@ -886,4 +886,67 @@ final class JobsTests: XCTestCase {
             XCTAssertEqual(zeroJobs.count, 0)
         }
     }
+
+    func testCleanupJob() async throws {
+        try await self.testJobQueue(
+            numWorkers: 1,
+            configuration: .init(
+                retentionPolicy: .init(
+                    cancelled: .retain,
+                    completed: .never,
+                    failed: .retain
+                )
+            )
+        ) { jobQueue in
+            try await self.testJobQueue(
+                numWorkers: 1,
+                configuration: .init(
+                    queueName: "SecondQueue",
+                    retentionPolicy: .init(
+                        cancelled: .retain,
+                        completed: .never,
+                        failed: .retain
+                    )
+                )
+            ) { jobQueue2 in
+                let (stream, cont) = AsyncStream.makeStream(of: Void.self)
+                var iterator = stream.makeAsyncIterator()
+                struct TempJob: Sendable & Codable {}
+                let barrierJobName = JobName<TempJob>("barrier")
+                jobQueue.registerJob(name: "testCleanupJob", parameters: String.self) { parameters, context in
+                    throw CancellationError()
+                }
+                jobQueue.registerJob(name: barrierJobName, parameters: TempJob.self) { parameters, context in
+                    cont.yield()
+                }
+                jobQueue2.registerJob(name: "testCleanupJob", parameters: String.self) { parameters, context in
+                    throw CancellationError()
+                }
+                jobQueue2.registerJob(name: barrierJobName, parameters: TempJob.self) { parameters, context in
+                    cont.yield()
+                }
+                try await jobQueue.push("testCleanupJob", parameters: "1")
+                try await jobQueue.push("testCleanupJob", parameters: "2")
+                try await jobQueue.push("testCleanupJob", parameters: "3")
+                try await jobQueue.push(barrierJobName, parameters: .init())
+                try await jobQueue2.push("testCleanupJob", parameters: "1")
+                try await jobQueue2.push(barrierJobName, parameters: .init())
+
+                await iterator.next()
+                await iterator.next()
+
+                let failedJob = try await jobQueue.queue.getJobs(withStatus: .failed)
+                XCTAssertEqual(failedJob.count, 3)
+                try await jobQueue.push(jobQueue.queue.cleanupJob, parameters: .init(failedJobs: .remove))
+                try await jobQueue.push(barrierJobName, parameters: .init())
+
+                await iterator.next()
+
+                let zeroJobs = try await jobQueue.queue.getJobs(withStatus: .failed)
+                XCTAssertEqual(zeroJobs.count, 0)
+                let jobCount2 = try await jobQueue2.queue.getJobs(withStatus: .failed)
+                XCTAssertEqual(jobCount2.count, 1)
+            }
+        }
+    }
 }

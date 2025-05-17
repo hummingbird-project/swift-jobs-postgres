@@ -42,7 +42,7 @@ public struct RetentionPolicy: Sendable {
 
     public init(
         cancelled: RetainData = .retain,
-        completed: RetainData = .retain,
+        completed: RetainData = .never,
         failed: RetainData = .retain
     ) {
         self.cancelled = cancelled

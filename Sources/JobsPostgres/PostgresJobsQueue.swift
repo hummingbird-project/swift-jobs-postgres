@@ -165,7 +165,6 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     public let configuration: Configuration
     /// Logger used by queue
     public let logger: Logger
-
     let migrations: DatabaseMigrations
     let isStopped: NIOLockedValueBox<Bool>
 
@@ -178,18 +177,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         self.isStopped = .init(false)
         self.migrations = migrations
         await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
-        self.registerJob(
-            JobDefinition(parameters: JobCleanupParameters.self, retryStrategy: .dontRetry) { parameters, context in
-                try await self.cleanup(
-                    failedJobs: parameters.failedJobs,
-                    processingJobs: .doNothing,
-                    pendingJobs: .doNothing,
-                    completedJobs: parameters.completedJobs,
-                    cancelledJobs: parameters.cancelledJobs,
-                    logger: logger
-                )
-            }
-        )
+        self.registerCleanupJob()
     }
 
     public func onInit() async throws {
