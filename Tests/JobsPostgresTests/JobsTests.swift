@@ -178,10 +178,15 @@ final class JobsTests: XCTestCase {
         processingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         pendingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         revertMigrations: Bool = true,
+        configuration: PostgresJobQueue.Configuration = .init(),
         function: String = #function,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
     ) async throws -> T {
-        let jobQueue = try await self.createJobQueue(numWorkers: numWorkers, configuration: .init(), function: function)
+        let jobQueue = try await self.createJobQueue(
+            numWorkers: numWorkers,
+            configuration: configuration,
+            function: function
+        )
         return try await self.testJobQueue(
             jobQueue: jobQueue,
             failedJobsInitialization: failedJobsInitialization,
@@ -490,7 +495,16 @@ final class JobsTests: XCTestCase {
         }
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 1)
 
-        try await self.testJobQueue(numWorkers: 4) { jobQueue in
+        try await self.testJobQueue(
+            numWorkers: 4,
+            configuration: .init(
+                retentionPolicy: .init(
+                    cancelled: .never,
+                    completed: .never,
+                    failed: .never
+                )
+            )
+        ) { jobQueue in
             jobQueue.registerJob(parameters: TestParameters.self) { _, _ in
                 expectation.fulfill()
                 try await Task.sleep(for: .milliseconds(1000))
@@ -769,7 +783,17 @@ final class JobsTests: XCTestCase {
         let didRunCancelledJob: NIOLockedValueBox<Bool> = .init(false)
         let didRunNoneCancelledJob: NIOLockedValueBox<Bool> = .init(false)
 
-        let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
+        let jobQueue = try await self.createJobQueue(
+            numWorkers: 1,
+            configuration: .init(
+                retentionPolicy: .init(
+                    cancelled: .never,
+                    completed: .never,
+                    failed: .never
+                )
+            ),
+            function: #function
+        )
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, context in
@@ -826,5 +850,103 @@ final class JobsTests: XCTestCase {
         }
         XCTAssertEqual(didRunCancelledJob.withLockedValue { $0 }, false)
         XCTAssertEqual(didRunNoneCancelledJob.withLockedValue { $0 }, true)
+    }
+
+    func testJobRetention() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "testJobRetention"
+            let value: Int
+        }
+        let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 3)
+        try await self.testJobQueue(
+            numWorkers: 1,
+            configuration: .init(
+                retentionPolicy: .init(
+                    cancelled: .retain,
+                    completed: .retain,
+                    failed: .retain
+                )
+            )
+        ) { jobQueue in
+            jobQueue.registerJob(parameters: TestParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                expectation.fulfill()
+            }
+            try await jobQueue.push(TestParameters(value: 1))
+            try await jobQueue.push(TestParameters(value: 2))
+            try await jobQueue.push(TestParameters(value: 3))
+
+            await fulfillment(of: [expectation], timeout: 10)
+            try await Task.sleep(for: .milliseconds(200))
+
+            let completedJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
+            XCTAssertEqual(completedJobs.count, 3)
+            try await jobQueue.queue.cleanup(completedJobs: .remove(maxAge: .seconds(0)))
+            let zeroJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
+            XCTAssertEqual(zeroJobs.count, 0)
+        }
+    }
+
+    func testCleanupJob() async throws {
+        try await self.testJobQueue(
+            numWorkers: 1,
+            configuration: .init(
+                retentionPolicy: .init(
+                    cancelled: .retain,
+                    completed: .never,
+                    failed: .retain
+                )
+            )
+        ) { jobQueue in
+            try await self.testJobQueue(
+                numWorkers: 1,
+                configuration: .init(
+                    queueName: "SecondQueue",
+                    retentionPolicy: .init(
+                        cancelled: .retain,
+                        completed: .never,
+                        failed: .retain
+                    )
+                )
+            ) { jobQueue2 in
+                let (stream, cont) = AsyncStream.makeStream(of: Void.self)
+                var iterator = stream.makeAsyncIterator()
+                struct TempJob: Sendable & Codable {}
+                let barrierJobName = JobName<TempJob>("barrier")
+                jobQueue.registerJob(name: "testCleanupJob", parameters: String.self) { parameters, context in
+                    throw CancellationError()
+                }
+                jobQueue.registerJob(name: barrierJobName, parameters: TempJob.self) { parameters, context in
+                    cont.yield()
+                }
+                jobQueue2.registerJob(name: "testCleanupJob", parameters: String.self) { parameters, context in
+                    throw CancellationError()
+                }
+                jobQueue2.registerJob(name: barrierJobName, parameters: TempJob.self) { parameters, context in
+                    cont.yield()
+                }
+                try await jobQueue.push("testCleanupJob", parameters: "1")
+                try await jobQueue.push("testCleanupJob", parameters: "2")
+                try await jobQueue.push("testCleanupJob", parameters: "3")
+                try await jobQueue.push(barrierJobName, parameters: .init())
+                try await jobQueue2.push("testCleanupJob", parameters: "1")
+                try await jobQueue2.push(barrierJobName, parameters: .init())
+
+                await iterator.next()
+                await iterator.next()
+
+                let failedJob = try await jobQueue.queue.getJobs(withStatus: .failed)
+                XCTAssertEqual(failedJob.count, 3)
+                try await jobQueue.push(jobQueue.queue.cleanupJob, parameters: .init(failedJobs: .remove))
+                try await jobQueue.push(barrierJobName, parameters: .init())
+
+                await iterator.next()
+
+                let zeroJobs = try await jobQueue.queue.getJobs(withStatus: .failed)
+                XCTAssertEqual(zeroJobs.count, 0)
+                let jobCount2 = try await jobQueue2.queue.getJobs(withStatus: .failed)
+                XCTAssertEqual(jobCount2.count, 1)
+            }
+        }
     }
 }
