@@ -197,7 +197,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     public func cancel(jobID: JobID) async throws {
         try await self.client.withTransaction(logger: logger) { connection in
             try await deleteFromQueue(jobID: jobID, connection: connection)
-            if configuration.retentionPolicy.cancelled == .never {
+            if configuration.retentionPolicy.cancelled == .doNotRetain {
                 try await delete(jobID: jobID)
             } else {
                 try await setStatus(jobID: jobID, status: .cancelled, connection: connection)
@@ -278,7 +278,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// This is called to say job has finished processing and it can be deleted
     public func finished(jobID: JobID) async throws {
-        if configuration.retentionPolicy.completed == .never {
+        if configuration.retentionPolicy.completed == .doNotRetain {
             try await self.delete(jobID: jobID)
         } else {
             try await self.setStatus(jobID: jobID, status: .completed)
@@ -287,7 +287,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// This is called to say job has failed to run and should be put aside
     public func failed(jobID: JobID, error: Error) async throws {
-        if configuration.retentionPolicy.failed == .never {
+        if configuration.retentionPolicy.failed == .doNotRetain {
             try await self.delete(jobID: jobID)
         } else {
             try await self.setStatus(jobID: jobID, status: .failed)

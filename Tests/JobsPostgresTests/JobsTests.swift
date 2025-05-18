@@ -499,9 +499,9 @@ final class JobsTests: XCTestCase {
             numWorkers: 4,
             configuration: .init(
                 retentionPolicy: .init(
-                    cancelled: .never,
-                    completed: .never,
-                    failed: .never
+                    cancelled: .doNotRetain,
+                    completed: .doNotRetain,
+                    failed: .doNotRetain
                 )
             )
         ) { jobQueue in
@@ -787,9 +787,9 @@ final class JobsTests: XCTestCase {
             numWorkers: 1,
             configuration: .init(
                 retentionPolicy: .init(
-                    cancelled: .never,
-                    completed: .never,
-                    failed: .never
+                    cancelled: .doNotRetain,
+                    completed: .doNotRetain,
+                    failed: .doNotRetain
                 )
             ),
             function: #function
@@ -893,7 +893,7 @@ final class JobsTests: XCTestCase {
             configuration: .init(
                 retentionPolicy: .init(
                     cancelled: .retain,
-                    completed: .never,
+                    completed: .doNotRetain,
                     failed: .retain
                 )
             )
@@ -904,7 +904,7 @@ final class JobsTests: XCTestCase {
                     queueName: "SecondQueue",
                     retentionPolicy: .init(
                         cancelled: .retain,
-                        completed: .never,
+                        completed: .doNotRetain,
                         failed: .retain
                     )
                 )

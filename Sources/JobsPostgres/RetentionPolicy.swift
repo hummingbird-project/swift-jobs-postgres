@@ -27,22 +27,19 @@ public struct RetentionPolicy: Sendable {
         /// Retain task
         public static var retain: RetainData { RetainData(rawValue: .retain) }
         /// Never retain any data
-        public static var never: RetainData { RetainData(rawValue: .doNotRetain) }
+        public static var doNotRetain: RetainData { RetainData(rawValue: .doNotRetain) }
     }
 
     /// Jobs with status cancelled
-    /// default retention is set for 7 days
     public var cancelled: RetainData
     /// Jobs with status completed
-    /// default retention is set to 7 days
     public var completed: RetainData
     /// Jobs with status failed
-    /// default retention is set to 30 days
     public var failed: RetainData
 
     public init(
-        cancelled: RetainData = .retain,
-        completed: RetainData = .never,
+        cancelled: RetainData = .doNotRetain,
+        completed: RetainData = .doNotRetain,
         failed: RetainData = .retain
     ) {
         self.cancelled = cancelled
