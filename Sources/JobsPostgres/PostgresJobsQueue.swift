@@ -502,6 +502,23 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         return jobs
     }
 
+    func getJobs(withStatus status: Status, connection: PostgresConnection) async throws -> [JobID] {
+        let stream = try await connection.query(
+            """
+            SELECT
+                id
+            FROM swift_jobs.jobs
+            WHERE status = \(status) AND queue_name = \(configuration.queueName)
+            """,
+            logger: self.logger
+        )
+        var jobs: [JobID] = []
+        for try await id in stream.decode(JobID.self, context: .default) {
+            jobs.append(id)
+        }
+        return jobs
+    }
+
     let jobRegistry: JobRegistry
 }
 

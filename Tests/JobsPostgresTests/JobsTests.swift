@@ -875,6 +875,8 @@ final class JobsTests: XCTestCase {
 
             let completedJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
             XCTAssertEqual(completedJobs.count, 3)
+            try await jobQueue.queue.cleanup(completedJobs: .remove(maxAge: .seconds(10)))
+            XCTAssertEqual(completedJobs.count, 3)
             try await jobQueue.queue.cleanup(completedJobs: .remove(maxAge: .seconds(0)))
             let zeroJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
             XCTAssertEqual(zeroJobs.count, 0)
@@ -907,6 +909,36 @@ final class JobsTests: XCTestCase {
             try await jobQueue.queue.cleanup(cancelledJobs: .remove(maxAge: .seconds(0)))
             cancelledJobs = try await jobQueue.queue.getJobs(withStatus: .cancelled)
             XCTAssertEqual(cancelledJobs.count, 0)
+
+            group.cancelAll()
+        }
+    }
+
+    func testCleanupProcessingJobs() async throws {
+        let jobQueue = try await self.createJobQueue(numWorkers: 1)
+        let jobName = JobName<Int>("testCancelledJobRetention")
+        jobQueue.registerJob(name: jobName) { _, _ in }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                // run postgres client
+                await jobQueue.queue.client.run()
+            }
+            try await jobQueue.queue.migrations.apply(client: jobQueue.queue.client, logger: jobQueue.logger, dryRun: false)
+
+            let jobID = try await jobQueue.push(jobName, parameters: 1)
+            let job = try await jobQueue.queue.popFirst()
+            XCTAssertEqual(jobID, job?.id)
+            _ = try await jobQueue.push(jobName, parameters: 1)
+            _ = try await jobQueue.queue.popFirst()
+
+            var processingJobs = try await jobQueue.queue.getJobs(withStatus: .processing)
+            XCTAssertEqual(processingJobs.count, 2)
+
+            try await jobQueue.queue.cleanup(processingJobs: .remove)
+
+            processingJobs = try await jobQueue.queue.getJobs(withStatus: .processing)
+            XCTAssertEqual(processingJobs.count, 0)
 
             group.cancelAll()
         }

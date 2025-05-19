@@ -111,7 +111,7 @@ extension PostgresJobQueue {
             /// wait for migrations to complete before running job queue cleanup
             try await self.migrations.waitUntilCompleted()
             _ = try await self.client.withTransaction(logger: logger) { connection in
-                self.logger.info("Update Jobs")
+                self.logger.info("Cleanup Jobs")
                 try await self.updateJobsOnInit(withStatus: .pending, onInit: pendingJobs, connection: connection)
                 try await self.updateJobsOnInit(withStatus: .processing, onInit: processingJobs, connection: connection)
                 try await self.updateJobsOnInit(withStatus: .failed, onInit: failedJobs, connection: connection)
@@ -148,7 +148,7 @@ extension PostgresJobQueue {
             )
 
         case .rerun:
-            let jobs = try await getJobs(withStatus: status)
+            let jobs = try await getJobs(withStatus: status, connection: connection)
             self.logger.info("Moving \(jobs.count) jobs with status: \(status) to job queue")
             for jobID in jobs {
                 try await self.addToQueue(jobID: jobID, queueName: configuration.queueName, options: .init(), connection: connection)
