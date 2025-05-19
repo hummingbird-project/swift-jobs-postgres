@@ -58,7 +58,7 @@ extension PostgresJobQueue {
     /// Use this with the ``JobSchedule`` to schedule a cleanup of
     /// failed, cancelled or completed jobs
     public var cleanupJob: JobName<JobCleanupParameters> {
-        .init("_JobCleanup_\(self.configuration.queueName)")
+        .init("_Jobs_PostgresCleanup_\(self.configuration.queueName)")
     }
 
     /// register clean up job on queue
