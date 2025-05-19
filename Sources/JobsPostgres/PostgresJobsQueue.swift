@@ -45,20 +45,6 @@ import PostgresNIO
 public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, ResumableJobQueue {
 
     public typealias JobID = UUID
-    /// what to do with failed/processing jobs from last time queue was handled
-    public struct JobCleanup: Sendable, Codable {
-        enum RawValue: Codable {
-            case doNothing
-            case rerun
-            case remove(maxAge: Duration?)
-        }
-        let rawValue: RawValue
-
-        public static var doNothing: Self { .init(rawValue: .doNothing) }
-        public static var rerun: Self { .init(rawValue: .rerun) }
-        public static var remove: Self { .init(rawValue: .remove(maxAge: nil)) }
-        public static func remove(maxAge: Duration) -> Self { .init(rawValue: .remove(maxAge: maxAge)) }
-    }
 
     /// Job priority from lowest to highest
     public struct JobPriority: Equatable, Sendable {

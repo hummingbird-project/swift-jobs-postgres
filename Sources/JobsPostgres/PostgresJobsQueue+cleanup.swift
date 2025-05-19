@@ -38,6 +38,21 @@ public struct JobCleanupParameters: Sendable & Codable {
 }
 
 extension PostgresJobQueue {
+    /// what to do with failed/processing jobs from last time queue was handled
+    public struct JobCleanup: Sendable, Codable {
+        enum RawValue: Codable {
+            case doNothing
+            case rerun
+            case remove(maxAge: Duration?)
+        }
+        let rawValue: RawValue
+
+        public static var doNothing: Self { .init(rawValue: .doNothing) }
+        public static var rerun: Self { .init(rawValue: .rerun) }
+        public static var remove: Self { .init(rawValue: .remove(maxAge: nil)) }
+        public static func remove(maxAge: Duration) -> Self { .init(rawValue: .remove(maxAge: maxAge)) }
+    }
+
     /// clean up job name.
     ///
     /// Use this with the ``JobSchedule`` to schedule a cleanup of
