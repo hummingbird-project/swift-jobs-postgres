@@ -45,12 +45,6 @@ import PostgresNIO
 public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, ResumableJobQueue {
 
     public typealias JobID = UUID
-    /// what to do with failed/processing jobs from last time queue was handled
-    public enum JobCleanup: Sendable {
-        case doNothing
-        case rerun
-        case remove
-    }
 
     /// Job priority from lowest to highest
     public struct JobPriority: Equatable, Sendable {
@@ -124,6 +118,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         case failed = 2
         case cancelled = 3
         case paused = 4
+        case completed = 5
     }
 
     /// Queue configuration
@@ -132,6 +127,8 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         let pollTime: Duration
         /// Which Queue to push jobs into
         let queueName: String
+        /// Retention policy for jobs
+        let retentionPolicy: RetentionPolicy
 
         ///  Initialize configuration
         /// - Parameters
@@ -139,10 +136,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         ///   - queueName: Name of queue we are handing
         public init(
             pollTime: Duration = .milliseconds(100),
-            queueName: String = "default"
+            queueName: String = "default",
+            retentionPolicy: RetentionPolicy = .init()
         ) {
             self.pollTime = pollTime
             self.queueName = queueName
+            self.retentionPolicy = retentionPolicy
         }
     }
 
@@ -152,7 +151,6 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     public let configuration: Configuration
     /// Logger used by queue
     public let logger: Logger
-
     let migrations: DatabaseMigrations
     let isStopped: NIOLockedValueBox<Bool>
 
@@ -165,6 +163,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         self.isStopped = .init(false)
         self.migrations = migrations
         await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
+        self.registerCleanupJob()
     }
 
     public func onInit() async throws {
@@ -184,7 +183,11 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     public func cancel(jobID: JobID) async throws {
         try await self.client.withTransaction(logger: logger) { connection in
             try await deleteFromQueue(jobID: jobID, connection: connection)
-            try await delete(jobID: jobID)
+            if configuration.retentionPolicy.cancelled == .doNotRetain {
+                try await delete(jobID: jobID)
+            } else {
+                try await setStatus(jobID: jobID, status: .cancelled, connection: connection)
+            }
         }
     }
 
@@ -223,53 +226,6 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         }
     }
 
-    ///  Cleanup job queues
-    ///
-    /// This function is used to re-run or delete jobs in a certain state. Failed jobs can be
-    /// pushed back into the pending queue to be re-run or removed. When called at startup in
-    /// theory no job should be set to processing, or set to pending but not in the queue. but if
-    /// your job server crashes these states are possible, so we also provide options to re-queue
-    /// these jobs so they are run again.
-    ///
-    /// The job queue needs to be running when you call cleanup. You can call `cleanup` with
-    /// `failedJobs`` set to whatever you like at any point to re-queue failed jobs. Moving processing
-    /// or pending jobs should only be done if you are certain there is nothing else processing
-    /// the job queue.
-    ///
-    /// - Parameters:
-    ///   - failedJobs: What to do with jobs tagged as failed
-    ///   - processingJobs: What to do with jobs tagged as processing
-    ///   - pendingJobs: What to do with jobs tagged as pending
-    /// - Throws:
-    public func cleanup(
-        failedJobs: JobCleanup = .doNothing,
-        processingJobs: JobCleanup = .doNothing,
-        pendingJobs: JobCleanup = .doNothing
-    ) async throws {
-        do {
-            /// wait for migrations to complete before running job queue cleanup
-            try await self.migrations.waitUntilCompleted()
-            _ = try await self.client.withConnection { connection in
-                self.logger.info("Update Jobs")
-                try await self.updateJobsOnInit(withStatus: .pending, onInit: pendingJobs, connection: connection)
-                try await self.updateJobsOnInit(
-                    withStatus: .processing,
-                    onInit: processingJobs,
-                    connection: connection
-                )
-                try await self.updateJobsOnInit(withStatus: .failed, onInit: failedJobs, connection: connection)
-            }
-        } catch let error as PSQLError {
-            logger.error(
-                "JobQueue initialization failed",
-                metadata: [
-                    "Error": "\(String(reflecting: error))"
-                ]
-            )
-            throw error
-        }
-    }
-
     ///  Register job
     /// - Parameters:
     ///   - job: Job Definition
@@ -290,15 +246,15 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// Retry an existing Job
     /// - Parameters
-    ///   - id: Job instance ID
+    ///   - jobID: Job instance ID
     ///   - jobRequest: Job Request
     ///   - options: Job retry options
-    public func retry<Parameters>(_ id: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
+    public func retry<Parameters>(_ jobID: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.updateJob(id: id, buffer: buffer, connection: connection)
+            try await self.updateJob(jobID: jobID, buffer: buffer, connection: connection)
             try await self.addToQueue(
-                jobID: id,
+                jobID: jobID,
                 queueName: configuration.queueName,
                 options: .init(delayUntil: options.delayUntil),
                 connection: connection
@@ -308,12 +264,20 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// This is called to say job has finished processing and it can be deleted
     public func finished(jobID: JobID) async throws {
-        try await self.delete(jobID: jobID)
+        if configuration.retentionPolicy.completed == .doNotRetain {
+            try await self.delete(jobID: jobID)
+        } else {
+            try await self.setStatus(jobID: jobID, status: .completed)
+        }
     }
 
     /// This is called to say job has failed to run and should be put aside
     public func failed(jobID: JobID, error: Error) async throws {
-        try await self.setStatus(jobID: jobID, status: .failed)
+        if configuration.retentionPolicy.failed == .doNotRetain {
+            try await self.delete(jobID: jobID)
+        } else {
+            try await self.setStatus(jobID: jobID, status: .failed)
+        }
     }
 
     /// stop serving jobs
@@ -451,15 +415,15 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             logger: self.logger
         )
     }
-    // TODO: maybe add a new column colum for attempt so far after PR https://github.com/hummingbird-project/swift-jobs/pull/63 is merged?
-    func updateJob(id: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
+
+    func updateJob(jobID: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
         try await connection.query(
             """
             UPDATE swift_jobs.jobs
             SET job = \(buffer),
                 last_modified = \(Date.now),
                 status = \(Status.failed)
-            WHERE id = \(id) AND queue_name = \(configuration.queueName)
+            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
             """,
             logger: self.logger
         )
@@ -538,27 +502,21 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         return jobs
     }
 
-    func updateJobsOnInit(withStatus status: Status, onInit: JobCleanup, connection: PostgresConnection) async throws {
-        switch onInit {
-        case .remove:
-            try await connection.query(
-                """
-                DELETE FROM swift_jobs.jobs
-                WHERE status = \(status) AND queue_name = \(configuration.queueName)
-                """,
-                logger: self.logger
-            )
-
-        case .rerun:
-            let jobs = try await getJobs(withStatus: status)
-            self.logger.info("Moving \(jobs.count) jobs with status: \(status) to job queue")
-            for jobID in jobs {
-                try await self.addToQueue(jobID: jobID, queueName: configuration.queueName, options: .init(), connection: connection)
-            }
-
-        case .doNothing:
-            break
+    func getJobs(withStatus status: Status, connection: PostgresConnection) async throws -> [JobID] {
+        let stream = try await connection.query(
+            """
+            SELECT
+                id
+            FROM swift_jobs.jobs
+            WHERE status = \(status) AND queue_name = \(configuration.queueName)
+            """,
+            logger: self.logger
+        )
+        var jobs: [JobID] = []
+        for try await id in stream.decode(JobID.self, context: .default) {
+            jobs.append(id)
         }
+        return jobs
     }
 
     let jobRegistry: JobRegistry
