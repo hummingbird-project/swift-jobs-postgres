@@ -852,21 +852,15 @@ final class JobsTests: XCTestCase {
         XCTAssertEqual(didRunNoneCancelledJob.withLockedValue { $0 }, true)
     }
 
-    func testJobRetention() async throws {
+    func testCompletedJobRetention() async throws {
         struct TestParameters: JobParameters {
-            static let jobName = "testJobRetention"
+            static let jobName = "testCompletedJobRetention"
             let value: Int
         }
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 3)
         try await self.testJobQueue(
             numWorkers: 1,
-            configuration: .init(
-                retentionPolicy: .init(
-                    cancelled: .retain,
-                    completed: .retain,
-                    failed: .retain
-                )
-            )
+            configuration: .init(retentionPolicy: .init(completed: .retain))
         ) { jobQueue in
             jobQueue.registerJob(parameters: TestParameters.self) { parameters, context in
                 context.logger.info("Parameters=\(parameters.value)")
@@ -887,26 +881,47 @@ final class JobsTests: XCTestCase {
         }
     }
 
+    func testCancelledJobRetention() async throws {
+        let jobQueue = try await self.createJobQueue(
+            numWorkers: 1,
+            configuration: .init(retentionPolicy: .init(cancelled: .retain))
+        )
+        let jobName = JobName<Int>("testCancelledJobRetention")
+        jobQueue.registerJob(name: jobName) { _, _ in }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                // run postgres client
+                await jobQueue.queue.client.run()
+            }
+            try await jobQueue.queue.migrations.apply(client: jobQueue.queue.client, logger: jobQueue.logger, dryRun: false)
+
+            let jobId = try await jobQueue.push(jobName, parameters: 1)
+            let jobId2 = try await jobQueue.push(jobName, parameters: 2)
+
+            try await jobQueue.cancelJob(jobID: jobId)
+            try await jobQueue.cancelJob(jobID: jobId2)
+
+            var cancelledJobs = try await jobQueue.queue.getJobs(withStatus: .cancelled)
+            XCTAssertEqual(cancelledJobs.count, 2)
+            try await jobQueue.queue.cleanup(cancelledJobs: .remove(maxAge: .seconds(0)))
+            cancelledJobs = try await jobQueue.queue.getJobs(withStatus: .cancelled)
+            XCTAssertEqual(cancelledJobs.count, 0)
+
+            group.cancelAll()
+        }
+    }
+
     func testCleanupJob() async throws {
         try await self.testJobQueue(
             numWorkers: 1,
-            configuration: .init(
-                retentionPolicy: .init(
-                    cancelled: .retain,
-                    completed: .doNotRetain,
-                    failed: .retain
-                )
-            )
+            configuration: .init(retentionPolicy: .init(failed: .retain))
         ) { jobQueue in
             try await self.testJobQueue(
                 numWorkers: 1,
                 configuration: .init(
                     queueName: "SecondQueue",
-                    retentionPolicy: .init(
-                        cancelled: .retain,
-                        completed: .doNotRetain,
-                        failed: .retain
-                    )
+                    retentionPolicy: .init(failed: .retain)
                 )
             ) { jobQueue2 in
                 let (stream, cont) = AsyncStream.makeStream(of: Void.self)
