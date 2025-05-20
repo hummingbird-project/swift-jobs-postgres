@@ -112,6 +112,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     }
 
     /// Job Status
+    @usableFromInline
     enum Status: Int16, PostgresCodable {
         case pending = 0
         case processing = 1
@@ -124,11 +125,11 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     /// Queue configuration
     public struct Configuration: Sendable {
         /// Queue poll time to wait if queue empties
-        let pollTime: Duration
+        public var pollTime: Duration
         /// Which Queue to push jobs into
-        let queueName: String
+        public var queueName: String
         /// Retention policy for jobs
-        let retentionPolicy: RetentionPolicy
+        public var retentionPolicy: RetentionPolicy
 
         ///  Initialize configuration
         /// - Parameters
@@ -152,6 +153,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     /// Logger used by queue
     public let logger: Logger
     let migrations: DatabaseMigrations
+    @usableFromInline
     let isStopped: NIOLockedValueBox<Bool>
 
     /// Initialize a PostgresJobQueue
@@ -180,11 +182,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     /// - Parameters:
     ///   - jobID: an existing job
     /// - Throws:
+    @inlinable
     public func cancel(jobID: JobID) async throws {
         try await self.client.withTransaction(logger: logger) { connection in
             try await deleteFromQueue(jobID: jobID, connection: connection)
             if configuration.retentionPolicy.cancelled == .doNotRetain {
-                try await delete(jobID: jobID)
+                try await delete(jobID: jobID, connection: connection)
             } else {
                 try await setStatus(jobID: jobID, status: .cancelled, connection: connection)
             }
@@ -199,6 +202,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     /// - Parameters:
     ///   - jobID: an existing job
     /// - Throws:
+    @inlinable
     public func pause(jobID: UUID) async throws {
         try await self.client.withTransaction(logger: logger) { connection in
             try await deleteFromQueue(jobID: jobID, connection: connection)
@@ -214,6 +218,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     /// - Parameters:
     ///   - jobID: an existing job
     /// - Throws:
+    @inlinable
     public func resume(jobID: JobID) async throws {
         try await self.client.withTransaction(logger: logger) { connection in
             try await setStatus(jobID: jobID, status: .pending, connection: connection)
@@ -235,7 +240,9 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// Push Job onto queue
     /// - Returns: Identifier of queued job
-    @discardableResult public func push<Parameters>(_ jobRequest: JobRequest<Parameters>, options: JobOptions) async throws -> JobID {
+    @discardableResult
+    @inlinable
+    public func push<Parameters>(_ jobRequest: JobRequest<Parameters>, options: JobOptions) async throws -> JobID {
         let jobID = JobID()
         try await self.client.withTransaction(logger: self.logger) { connection in
             try await self.add(jobID: jobID, jobRequest: jobRequest, queueName: configuration.queueName, connection: connection)
@@ -249,10 +256,10 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     ///   - jobID: Job instance ID
     ///   - jobRequest: Job Request
     ///   - options: Job retry options
+    @inlinable
     public func retry<Parameters>(_ jobID: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
-        let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.updateJob(jobID: jobID, buffer: buffer, connection: connection)
+            try await self.updateJob(jobID: jobID, jobRequest: jobRequest, connection: connection)
             try await self.addToQueue(
                 jobID: jobID,
                 queueName: configuration.queueName,
@@ -263,6 +270,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     }
 
     /// This is called to say job has finished processing and it can be deleted
+    @inlinable
     public func finished(jobID: JobID) async throws {
         if configuration.retentionPolicy.completed == .doNotRetain {
             try await self.delete(jobID: jobID)
@@ -272,6 +280,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     }
 
     /// This is called to say job has failed to run and should be put aside
+    @inlinable
     public func failed(jobID: JobID, error: Error) async throws {
         if configuration.retentionPolicy.failed == .doNotRetain {
             try await self.delete(jobID: jobID)
@@ -288,6 +297,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     /// shutdown queue once all active jobs have been processed
     public func shutdownGracefully() async {}
 
+    @inlinable
     public func getMetadata(_ key: String) async throws -> ByteBuffer? {
         let stream = try await self.client.query(
             "SELECT value FROM swift_jobs.queues_metadata WHERE key = \(key) AND queue_name = \(configuration.queueName)",
@@ -299,6 +309,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         return nil
     }
 
+    @inlinable
     public func setMetadata(key: String, value: ByteBuffer) async throws {
         try await self.client.query(
             """
@@ -311,6 +322,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         )
     }
 
+    @usableFromInline
     func popFirst() async throws -> JobQueueResult<JobID>? {
         enum PopFirstResult {
             case nothing
@@ -406,6 +418,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         }
     }
 
+    @usableFromInline
     func add<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, queueName: String, connection: PostgresConnection) async throws {
         try await connection.query(
             """
@@ -416,7 +429,9 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         )
     }
 
-    func updateJob(jobID: JobID, buffer: ByteBuffer, connection: PostgresConnection) async throws {
+    @usableFromInline
+    func updateJob<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, connection: PostgresConnection) async throws {
+        let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
         try await connection.query(
             """
             UPDATE swift_jobs.jobs
@@ -429,6 +444,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         )
     }
 
+    @usableFromInline
     func delete(jobID: JobID) async throws {
         try await self.client.query(
             """
@@ -439,6 +455,18 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         )
     }
 
+    @usableFromInline
+    func delete(jobID: JobID, connection: PostgresConnection) async throws {
+        try await connection.query(
+            """
+            DELETE FROM swift_jobs.jobs
+            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
+            """,
+            logger: self.logger
+        )
+    }
+
+    @usableFromInline
     func deleteFromQueue(jobID: JobID, connection: PostgresConnection) async throws {
         try await connection.query(
             """
@@ -449,6 +477,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         )
     }
 
+    @usableFromInline
     func addToQueue(jobID: JobID, queueName: String, options: JobOptions, connection: PostgresConnection) async throws {
         try await connection.query(
             """
@@ -461,6 +490,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         )
     }
 
+    @usableFromInline
     func setStatus(jobID: JobID, status: Status, connection: PostgresConnection) async throws {
         try await connection.query(
             """
@@ -473,6 +503,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         )
     }
 
+    @usableFromInline
     func setStatus(jobID: JobID, status: Status) async throws {
         try await self.client.query(
             """
@@ -527,8 +558,10 @@ extension PostgresJobQueue {
     public struct AsyncIterator: AsyncIteratorProtocol {
         public typealias Element = JobQueueResult<JobID>
 
+        @usableFromInline
         let queue: PostgresJobQueue
 
+        @inlinable
         public func next() async throws -> Element? {
             while true {
                 if self.queue.isStopped.withLockedValue({ $0 }) {
