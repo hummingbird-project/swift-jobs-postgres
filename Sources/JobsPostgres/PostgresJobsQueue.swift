@@ -42,7 +42,7 @@ import PostgresNIO
 ///     try await migrations.apply(client: postgresClient, logger: logger, dryRun: applyMigrations)
 /// }
 /// ```
-public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, ResumableJobQueue {
+public final class PostgresJobQueue: JobQueueDriver, JobMetadataDriver, CancellableJobQueue, ResumableJobQueue {
 
     public typealias JobID = UUID
 
