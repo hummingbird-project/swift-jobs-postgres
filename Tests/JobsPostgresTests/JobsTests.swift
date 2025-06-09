@@ -42,7 +42,6 @@ extension XCTestExpectation {
 
 final class JobsTests: XCTestCase {
     func createJobQueue(
-        numWorkers: Int,
         configuration: PostgresJobQueue.Configuration = .init(),
         function: String = #function
     ) async throws -> JobQueue<PostgresJobQueue> {
@@ -63,7 +62,6 @@ final class JobsTests: XCTestCase {
                 configuration: configuration,
                 logger: logger
             ),
-            numWorkers: numWorkers,
             logger: logger,
             options: .init(defaultRetryStrategy: .exponentialJitter(maxBackoff: .milliseconds(10)))
         )
@@ -75,6 +73,7 @@ final class JobsTests: XCTestCase {
     /// shutdown correctly
     @discardableResult public func testJobQueue<T>(
         jobQueue: JobQueue<PostgresJobQueue>,
+        jobProcessorOptions: JobQueueProcessorOptions = .init(),
         failedJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         processingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         pendingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
@@ -85,7 +84,7 @@ final class JobsTests: XCTestCase {
             return try await withThrowingTaskGroup(of: Void.self) { group in
                 let serviceGroup = ServiceGroup(
                     configuration: .init(
-                        services: [jobQueue.queue.client, jobQueue],
+                        services: [jobQueue.queue.client, jobQueue.processor(options: jobProcessorOptions)],
                         gracefulShutdownSignals: [.sigterm, .sigint],
                         logger: jobQueue.queue.logger
                     )
@@ -183,12 +182,12 @@ final class JobsTests: XCTestCase {
         test: (JobQueue<PostgresJobQueue>) async throws -> T
     ) async throws -> T {
         let jobQueue = try await self.createJobQueue(
-            numWorkers: numWorkers,
             configuration: configuration,
             function: function
         )
         return try await self.testJobQueue(
             jobQueue: jobQueue,
+            jobProcessorOptions: .init(numWorkers: numWorkers),
             failedJobsInitialization: failedJobsInitialization,
             processingJobsInitialization: processingJobsInitialization,
             pendingJobsInitialization: pendingJobsInitialization,
@@ -268,7 +267,7 @@ final class JobsTests: XCTestCase {
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 2)
         let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
 
-        let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
+        let jobQueue = try await self.createJobQueue(configuration: .init(), function: #function)
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, context in
@@ -295,7 +294,7 @@ final class JobsTests: XCTestCase {
             )
 
             try await withThrowingTaskGroup(of: Void.self) { group in
-                let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
+                let serviceGroup = ServiceGroup(services: [queue.processor()], logger: queue.logger)
 
                 let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
                 XCTAssertEqual(processingJobs.count, 2)
@@ -322,7 +321,7 @@ final class JobsTests: XCTestCase {
         let expectation = XCTestExpectation(description: "TestJob.execute was called", expectedFulfillmentCount: 2)
         let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
 
-        let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
+        let jobQueue = try await self.createJobQueue(configuration: .init(), function: #function)
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, context in
@@ -350,7 +349,7 @@ final class JobsTests: XCTestCase {
             )
 
             try await withThrowingTaskGroup(of: Void.self) { group in
-                let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
+                let serviceGroup = ServiceGroup(services: [queue.processor()], logger: queue.logger)
 
                 let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
                 XCTAssertEqual(processingJobs.count, 2)
@@ -566,9 +565,7 @@ final class JobsTests: XCTestCase {
             succeededExpectation.fulfill()
             finished.store(true, ordering: .relaxed)
         }
-        let jobQueue = try await createJobQueue(
-            numWorkers: 1
-        )
+        let jobQueue = try await createJobQueue()
         jobQueue.registerJob(job)
         try await self.testJobQueue(
             jobQueue: jobQueue,
@@ -582,7 +579,7 @@ final class JobsTests: XCTestCase {
             XCTAssertFalse(finished.load(ordering: .relaxed))
         }
 
-        let jobQueue2 = try await createJobQueue(numWorkers: 1)
+        let jobQueue2 = try await createJobQueue()
         jobQueue2.registerJob(job)
         try await self.testJobQueue(jobQueue: jobQueue2, failedJobsInitialization: .rerun) { _ in
             await fulfillment(of: [succeededExpectation], timeout: 10)
@@ -617,7 +614,6 @@ final class JobsTests: XCTestCase {
                 migrations: postgresMigrations,
                 logger: logger
             ),
-            numWorkers: 2,
             logger: logger
         )
         let postgresMigrations2 = DatabaseMigrations()
@@ -630,7 +626,6 @@ final class JobsTests: XCTestCase {
                 ),
                 logger: logger
             ),
-            numWorkers: 2,
             logger: logger
         )
         jobQueue.registerJob(job)
@@ -639,7 +634,11 @@ final class JobsTests: XCTestCase {
         try await withThrowingTaskGroup(of: Void.self) { group in
             let serviceGroup = ServiceGroup(
                 configuration: .init(
-                    services: [postgresClient, jobQueue, jobQueue2],
+                    services: [
+                        postgresClient,
+                        jobQueue.processor(options: .init(numWorkers: 2)),
+                        jobQueue2.processor(options: .init(numWorkers: 2)),
+                    ],
                     gracefulShutdownSignals: [.sigterm, .sigint],
                     logger: logger
                 )
@@ -709,7 +708,7 @@ final class JobsTests: XCTestCase {
         let didResumableJobRun: NIOLockedValueBox<Bool> = .init(false)
         let didTestJobRun: NIOLockedValueBox<Bool> = .init(false)
 
-        let jobQueue = try await self.createJobQueue(numWorkers: 1, configuration: .init(), function: #function)
+        let jobQueue = try await self.createJobQueue(configuration: .init(), function: #function)
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, _ in
@@ -745,7 +744,7 @@ final class JobsTests: XCTestCase {
             try await jobQueue.pauseJob(jobID: resumableJob)
 
             try await withThrowingTaskGroup(of: Void.self) { group in
-                let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
+                let serviceGroup = ServiceGroup(services: [queue.processor()], logger: queue.logger)
 
                 let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
                 XCTAssertEqual(processingJobs.count, 1)
@@ -784,7 +783,6 @@ final class JobsTests: XCTestCase {
         let didRunNoneCancelledJob: NIOLockedValueBox<Bool> = .init(false)
 
         let jobQueue = try await self.createJobQueue(
-            numWorkers: 1,
             configuration: .init(
                 retentionPolicy: .init(
                     cancelled: .doNotRetain,
@@ -831,7 +829,7 @@ final class JobsTests: XCTestCase {
             try await jobQueue.cancelJob(jobID: cancellableJob)
 
             try await withThrowingTaskGroup(of: Void.self) { group in
-                let serviceGroup = ServiceGroup(services: [queue], logger: queue.logger)
+                let serviceGroup = ServiceGroup(services: [queue.processor()], logger: queue.logger)
 
                 let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
                 XCTAssertEqual(processingJobs.count, 1)
@@ -885,7 +883,6 @@ final class JobsTests: XCTestCase {
 
     func testCancelledJobRetention() async throws {
         let jobQueue = try await self.createJobQueue(
-            numWorkers: 1,
             configuration: .init(retentionPolicy: .init(cancelled: .retain))
         )
         let jobName = JobName<Int>("testCancelledJobRetention")
@@ -915,7 +912,7 @@ final class JobsTests: XCTestCase {
     }
 
     func testCleanupProcessingJobs() async throws {
-        let jobQueue = try await self.createJobQueue(numWorkers: 1)
+        let jobQueue = try await self.createJobQueue()
         let jobName = JobName<Int>("testCancelledJobRetention")
         jobQueue.registerJob(name: jobName) { _, _ in }
 

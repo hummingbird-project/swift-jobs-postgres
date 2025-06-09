@@ -161,7 +161,7 @@ public final class PostgresJobQueue: JobQueueDriver, JobMetadataDriver, Cancella
         self.registerCleanupJob()
     }
 
-    public func onInit() async throws {
+    public func waitUntilReady() async throws {
         self.logger.info("Waiting for JobQueue migrations")
         /// Need migrations to have completed before job queue processing can start
         try await self.migrations.waitUntilCompleted()
