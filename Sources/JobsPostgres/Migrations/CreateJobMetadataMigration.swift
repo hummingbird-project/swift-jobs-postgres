@@ -24,7 +24,7 @@ struct CreateJobMetadataMigration: DatabaseMigration {
             CREATE TABLE IF NOT EXISTS swift_jobs.metadata(
                 key TEXT NOT NULL,
                 value BYTEA NOT NULL,
-                expires TIMESTAMPTZ NOT NULL DEFAULT '+infinity',
+                expires TIMESTAMPTZ NOT NULL DEFAULT 'infinity',
                 queue_name TEXT NOT NULL DEFAULT 'default',
                 CONSTRAINT key_queue_name PRIMARY KEY (key, queue_name)
             )
