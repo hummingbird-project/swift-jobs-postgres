@@ -587,6 +587,8 @@ extension PostgresJobQueue: JobMetadataDriver {
     @inlinable
     public func acquireLock(key: String, id: ByteBuffer, expiresIn: TimeInterval) async throws -> Bool {
         let expires = Date.now + expiresIn
+        // insert key, value, expiration into table. On conflict with key and queue_name only set value and
+        // expiration if expiration is out of date or value is the same
         let stream = try await self.client.query(
             """
             INSERT INTO swift_jobs.metadata (key, value, expires, queue_name)
