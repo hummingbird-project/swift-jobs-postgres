@@ -55,25 +55,6 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
             """,
             logger: logger
         )
-
-        try await connection.query(
-            """
-            CREATE TABLE IF NOT EXISTS swift_jobs.queues_metadata(
-                key TEXT PRIMARY KEY,
-                value BYTEA NOT NULL,
-                queue_name TEXT NOT NULL DEFAULT 'default'
-            )
-            """,
-            logger: logger
-        )
-
-        try await connection.query(
-            """
-            CREATE INDEX IF NOT EXISTS queues_metadata_key_queue_name_idx
-            ON swift_jobs.queues_metadata(key, queue_name)
-            """,
-            logger: logger
-        )
     }
 
     func revert(connection: PostgresNIO.PostgresConnection, logger: Logging.Logger) async throws {
