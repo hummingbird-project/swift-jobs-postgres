@@ -76,7 +76,6 @@ struct JobsTests {
         failedJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         processingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         pendingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
-        revertMigrations: Bool = false,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
     ) async throws -> T {
         do {
@@ -95,11 +94,12 @@ struct JobsTests {
                     let migrations = jobQueue.queue.migrations
                     let client = jobQueue.queue.client
                     let logger = jobQueue.queue.logger
-                    /*                    if revertMigrations {
-                                            try await migrations.revert(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
-                                        }*/
                     try await migrations.apply(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
-                    try await jobQueue.queue.cleanup(failedJobs: failedJobsInitialization, processingJobs: processingJobsInitialization)
+                    try await jobQueue.queue.cleanup(
+                        failedJobs: failedJobsInitialization,
+                        processingJobs: processingJobsInitialization,
+                        pendingJobs: pendingJobsInitialization
+                    )
                     let value = try await test(jobQueue)
                     await serviceGroup.triggerGracefulShutdown()
                     return value
@@ -124,7 +124,6 @@ struct JobsTests {
         failedJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         processingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         pendingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
-        revertMigrations: Bool = false,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
     ) async throws -> T {
         do {
@@ -143,11 +142,12 @@ struct JobsTests {
                     let migrations = jobQueue.queue.migrations
                     let client = jobQueue.queue.client
                     let logger = jobQueue.queue.logger
-                    /*                    if revertMigrations {
-                                            try await migrations.revert(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
-                                        }*/
                     try await migrations.apply(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
-                    try await jobQueue.queue.cleanup(failedJobs: failedJobsInitialization, processingJobs: processingJobsInitialization)
+                    try await jobQueue.queue.cleanup(
+                        failedJobs: failedJobsInitialization,
+                        processingJobs: processingJobsInitialization,
+                        pendingJobs: pendingJobsInitialization
+                    )
                     let value = try await test(jobQueue)
                     await serviceGroup.triggerGracefulShutdown()
                     return value
@@ -175,7 +175,6 @@ struct JobsTests {
         failedJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         processingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         pendingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
-        revertMigrations: Bool = true,
         configuration: PostgresJobQueue.Configuration = .init(),
         function: String = #function,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
@@ -190,7 +189,6 @@ struct JobsTests {
             failedJobsInitialization: failedJobsInitialization,
             processingJobsInitialization: processingJobsInitialization,
             pendingJobsInitialization: pendingJobsInitialization,
-            revertMigrations: revertMigrations,
             test: test
         )
     }
@@ -572,10 +570,7 @@ struct JobsTests {
         }
         let jobQueue = try await createJobQueue()
         jobQueue.registerJob(job)
-        try await self.testJobQueue(
-            jobQueue: jobQueue,
-            revertMigrations: true
-        ) { jobQueue in
+        try await self.testJobQueue(jobQueue: jobQueue) { jobQueue in
             try await jobQueue.push(TestParameters())
 
             try await failedExpectation.wait(for: "failed job")
