@@ -37,7 +37,7 @@ func getPostgresConfiguration() async throws -> PostgresClient.Configuration {
 @Suite("Postgres Jobs Queue", .serialized)
 struct JobsTests {
     func createJobQueue(
-        configuration: PostgresJobQueue.Configuration = .init(),
+        configuration: PostgresJobQueue.Configuration = .init(queueName: #function),
         function: String = #function
     ) async throws -> JobQueue<PostgresJobQueue> {
         let logger = {
@@ -319,7 +319,7 @@ struct JobsTests {
         let expectation = TestExpectation()
         let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
 
-        let jobQueue = try await self.createJobQueue(configuration: .init(), function: #function)
+        let jobQueue = try await self.createJobQueue(configuration: .init(queueName: "testJobPrioritiesWithDelay"), function: #function)
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, context in
@@ -700,7 +700,7 @@ struct JobsTests {
     }
 
     @Test func testMultipleQueueMetadata() async throws {
-        try await self.testJobQueue(numWorkers: 1, configuration: .init(queueName: "testMultipleQueueMetadata2")) { jobQueue1 in
+        try await self.testJobQueue(numWorkers: 1, configuration: .init(queueName: "testMultipleQueueMetadata")) { jobQueue1 in
             try await self.testJobQueue(numWorkers: 1, configuration: .init(queueName: "testMultipleQueueMetadata2")) { jobQueue2 in
                 try await jobQueue1.queue.setMetadata(key: "test", value: .init(string: "queue1"))
                 try await jobQueue2.queue.setMetadata(key: "test", value: .init(string: "queue2"))
@@ -723,7 +723,7 @@ struct JobsTests {
         let didResumableJobRun: NIOLockedValueBox<Bool> = .init(false)
         let didTestJobRun: NIOLockedValueBox<Bool> = .init(false)
 
-        let jobQueue = try await self.createJobQueue(configuration: .init(), function: #function)
+        let jobQueue = try await self.createJobQueue(configuration: .init(queueName: "testResumableAndPausableJobs"), function: #function)
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, _ in
@@ -799,6 +799,7 @@ struct JobsTests {
 
         let jobQueue = try await self.createJobQueue(
             configuration: .init(
+                queueName: "testCancellableJob",
                 retentionPolicy: .init(
                     cancelled: .doNotRetain,
                     completed: .doNotRetain,
@@ -898,7 +899,7 @@ struct JobsTests {
 
     @Test func testCancelledJobRetention() async throws {
         let jobQueue = try await self.createJobQueue(
-            configuration: .init(retentionPolicy: .init(cancelled: .retain))
+            configuration: .init(queueName: "testCancelledJobRetention", retentionPolicy: .init(cancelled: .retain))
         )
         let jobName = JobName<Int>("testCancelledJobRetention")
         jobQueue.registerJob(name: jobName) { _, _ in }
