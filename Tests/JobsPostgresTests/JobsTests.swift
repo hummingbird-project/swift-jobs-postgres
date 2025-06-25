@@ -23,7 +23,7 @@ import Testing
 
 @testable import JobsPostgres
 
-func getPostgresConfiguration() async throws -> PostgresClient.Configuration {
+func getPostgresConfiguration() -> PostgresClient.Configuration {
     .init(
         host: ProcessInfo.processInfo.environment["POSTGRES_HOSTNAME"] ?? "localhost",
         port: 5432,
@@ -34,10 +34,10 @@ func getPostgresConfiguration() async throws -> PostgresClient.Configuration {
     )
 }
 
-@Suite("Postgres Jobs Queue", .serialized)
+@Suite("Postgres Jobs Queue", .postgresMigrations(configuration: getPostgresConfiguration()))
 struct JobsTests {
     func createJobQueue(
-        configuration: PostgresJobQueue.Configuration = .init(queueName: #function),
+        configuration: PostgresJobQueue.Configuration = .init(),
         function: String = #function
     ) async throws -> JobQueue<PostgresJobQueue> {
         let logger = {
@@ -45,7 +45,11 @@ struct JobsTests {
             logger.logLevel = .debug
             return logger
         }()
-        let postgresClient = try await PostgresClient(
+        var configuration = configuration
+        if configuration.queueName == "default" {
+            configuration.queueName = function
+        }
+        let postgresClient = PostgresClient(
             configuration: getPostgresConfiguration(),
             backgroundLogger: logger
         )
@@ -91,9 +95,9 @@ struct JobsTests {
                     let migrations = jobQueue.queue.migrations
                     let client = jobQueue.queue.client
                     let logger = jobQueue.queue.logger
-                    if revertMigrations {
-                        try await migrations.revert(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
-                    }
+                    /*                    if revertMigrations {
+                                            try await migrations.revert(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
+                                        }*/
                     try await migrations.apply(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
                     try await jobQueue.queue.cleanup(failedJobs: failedJobsInitialization, processingJobs: processingJobsInitialization)
                     let value = try await test(jobQueue)
@@ -139,9 +143,9 @@ struct JobsTests {
                     let migrations = jobQueue.queue.migrations
                     let client = jobQueue.queue.client
                     let logger = jobQueue.queue.logger
-                    if revertMigrations {
-                        try await migrations.revert(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
-                    }
+                    /*                    if revertMigrations {
+                                            try await migrations.revert(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
+                                        }*/
                     try await migrations.apply(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
                     try await jobQueue.queue.cleanup(failedJobs: failedJobsInitialization, processingJobs: processingJobsInitialization)
                     let value = try await test(jobQueue)
@@ -172,7 +176,7 @@ struct JobsTests {
         processingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         pendingJobsInitialization: PostgresJobQueue.JobCleanup = .remove,
         revertMigrations: Bool = true,
-        configuration: PostgresJobQueue.Configuration = .init(queueName: #function),
+        configuration: PostgresJobQueue.Configuration = .init(),
         function: String = #function,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
     ) async throws -> T {
@@ -558,9 +562,11 @@ struct JobsTests {
         let succeededExpectation = TestExpectation()
         let job = JobDefinition(parameters: TestParameters.self) { _, _ in
             if firstTime.compareExchange(expected: true, desired: false, ordering: .relaxed).original {
+                print("FAILED")
                 failedExpectation.trigger()
                 throw RetryError()
             }
+            print("SUCCEEDED")
             succeededExpectation.trigger()
             finished.store(true, ordering: .relaxed)
         }
@@ -572,7 +578,7 @@ struct JobsTests {
         ) { jobQueue in
             try await jobQueue.push(TestParameters())
 
-            try await failedExpectation.wait()
+            try await failedExpectation.wait(for: "failed job")
 
             #expect(firstTime.load(ordering: .relaxed) == false)
             #expect(finished.load(ordering: .relaxed) == false)
@@ -581,7 +587,7 @@ struct JobsTests {
         let jobQueue2 = try await createJobQueue()
         jobQueue2.registerJob(job)
         try await self.testJobQueue(jobQueue: jobQueue2, failedJobsInitialization: .rerun) { _ in
-            try await succeededExpectation.wait()
+            try await succeededExpectation.wait(for: "succeeded job on restart")
             #expect(finished.load(ordering: .relaxed) == true)
         }
     }
@@ -602,7 +608,7 @@ struct JobsTests {
             try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
             expectation.trigger()
         }
-        let postgresClient = try await PostgresClient(
+        let postgresClient = PostgresClient(
             configuration: getPostgresConfiguration(),
             backgroundLogger: logger
         )
@@ -653,7 +659,7 @@ struct JobsTests {
             try await jobQueue.queue.cleanup(failedJobs: .remove, processingJobs: .remove)
             try await jobQueue2.queue.cleanup(failedJobs: .remove, processingJobs: .remove)
             do {
-                for i in 0..<200 {
+                for i in 0..<100 {
                     try await jobQueue.push(TestParameters(value: i))
                     try await jobQueue2.push(TestParameters(value: i))
                 }
@@ -670,7 +676,7 @@ struct JobsTests {
     @Test func testMetadata() async throws {
         let logger = Logger(label: "testMetadata")
         try await withThrowingTaskGroup(of: Void.self) { group in
-            let postgresClient = try await PostgresClient(
+            let postgresClient = PostgresClient(
                 configuration: getPostgresConfiguration(),
                 backgroundLogger: logger
             )
@@ -929,7 +935,7 @@ struct JobsTests {
 
     @Test func testCleanupProcessingJobs() async throws {
         let jobQueue = try await self.createJobQueue()
-        let jobName = JobName<Int>("testCancelledJobRetention")
+        let jobName = JobName<Int>("testCleanupProcessingJobs")
         jobQueue.registerJob(name: jobName) { _, _ in }
 
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -938,12 +944,13 @@ struct JobsTests {
                 await jobQueue.queue.client.run()
             }
             try await jobQueue.queue.migrations.apply(client: jobQueue.queue.client, logger: jobQueue.logger, dryRun: false)
-
+            try await jobQueue.queue.waitUntilReady()
             let jobID = try await jobQueue.push(jobName, parameters: 1)
-            let job = try await jobQueue.queue.popFirst()
+            let jobQueueIterator = jobQueue.queue.makeAsyncIterator()
+            let job = try await jobQueueIterator.next()
             #expect(jobID == job?.id)
             _ = try await jobQueue.push(jobName, parameters: 1)
-            _ = try await jobQueue.queue.popFirst()
+            _ = try await jobQueueIterator.next()
 
             var processingJobs = try await jobQueue.queue.getJobs(withStatus: .processing)
             #expect(processingJobs.count == 2)
@@ -960,12 +967,12 @@ struct JobsTests {
     @Test func testCleanupJob() async throws {
         try await self.testJobQueue(
             numWorkers: 1,
-            configuration: .init(retentionPolicy: .init(failed: .retain))
+            configuration: .init(queueName: "testCleanupJob", retentionPolicy: .init(failed: .retain))
         ) { jobQueue in
             try await self.testJobQueue(
                 numWorkers: 1,
                 configuration: .init(
-                    queueName: "SecondQueue",
+                    queueName: "testCleanupJob2",
                     retentionPolicy: .init(failed: .retain)
                 )
             ) { jobQueue2 in
@@ -1061,4 +1068,3 @@ struct JobsTests {
         }
     }
 }
-

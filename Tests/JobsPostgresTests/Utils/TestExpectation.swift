@@ -37,7 +37,7 @@ struct TestExpectation {
         cont.yield()
     }
 
-    func wait(for: String? = nil, count: Int = 1, timeout: Duration = .seconds(60)) async throws {
+    func wait(for: String? = nil, count: Int = 1, timeout: Duration = .seconds(10)) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
                 var iterator = self.stream.makeAsyncIterator()

@@ -157,15 +157,19 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         self.logger = logger
         self.isStopped = .init(false)
         self.migrations = migrations
-        await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
-        await migrations.add(CreateJobMetadataMigration(), skipDuplicates: true)
         self.registerCleanupJob()
+        await Self.addMigrations(to: self.migrations)
     }
 
     public func waitUntilReady() async throws {
         self.logger.info("Waiting for JobQueue migrations")
         /// Need migrations to have completed before job queue processing can start
         try await self.migrations.waitUntilCompleted()
+    }
+
+    package static func addMigrations(to migrations: DatabaseMigrations) async {
+        await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
+        await migrations.add(CreateJobMetadataMigration(), skipDuplicates: true)
     }
 
     ///  Cancel job
