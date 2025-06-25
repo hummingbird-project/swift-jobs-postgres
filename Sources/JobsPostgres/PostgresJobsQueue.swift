@@ -42,7 +42,7 @@ import PostgresNIO
 ///     try await migrations.apply(client: postgresClient, logger: logger, dryRun: applyMigrations)
 /// }
 /// ```
-public final class PostgresJobQueue: JobQueueDriver, JobMetadataDriver, CancellableJobQueue, ResumableJobQueue {
+public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, ResumableJobQueue {
 
     public typealias JobID = UUID
 
@@ -158,6 +158,7 @@ public final class PostgresJobQueue: JobQueueDriver, JobMetadataDriver, Cancella
         self.isStopped = .init(false)
         self.migrations = migrations
         await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
+        await migrations.add(CreateJobMetadataMigration(), skipDuplicates: true)
         self.registerCleanupJob()
     }
 
@@ -289,31 +290,6 @@ public final class PostgresJobQueue: JobQueueDriver, JobMetadataDriver, Cancella
 
     /// shutdown queue once all active jobs have been processed
     public func shutdownGracefully() async {}
-
-    @inlinable
-    public func getMetadata(_ key: String) async throws -> ByteBuffer? {
-        let stream = try await self.client.query(
-            "SELECT value FROM swift_jobs.queues_metadata WHERE key = \(key) AND queue_name = \(configuration.queueName)",
-            logger: self.logger
-        )
-        for try await value in stream.decode(ByteBuffer.self) {
-            return value
-        }
-        return nil
-    }
-
-    @inlinable
-    public func setMetadata(key: String, value: ByteBuffer) async throws {
-        try await self.client.query(
-            """
-            INSERT INTO swift_jobs.queues_metadata (key, value, queue_name)
-            VALUES (\(key), \(value), \(configuration.queueName))
-            ON CONFLICT (key)
-            DO UPDATE SET value = \(value)
-            """,
-            logger: self.logger
-        )
-    }
 
     @usableFromInline
     func popFirst() async throws -> JobQueueResult<JobID>? {
@@ -572,6 +548,81 @@ extension PostgresJobQueue {
 
     public func makeAsyncIterator() -> AsyncIterator {
         .init(queue: self)
+    }
+}
+
+extension PostgresJobQueue: JobMetadataDriver {
+    @inlinable
+    public func getMetadata(_ key: String) async throws -> ByteBuffer? {
+        let stream = try await self.client.query(
+            "SELECT value FROM swift_jobs.metadata WHERE key = \(key) AND queue_name = \(self.configuration.queueName)",
+            logger: self.logger
+        )
+        for try await value in stream.decode(ByteBuffer.self) {
+            return value
+        }
+        return nil
+    }
+
+    @inlinable
+    public func setMetadata(key: String, value: ByteBuffer) async throws {
+        try await self.client.query(
+            """
+            INSERT INTO swift_jobs.metadata (key, value, queue_name)
+            VALUES (\(key), \(value), \(self.configuration.queueName))
+            ON CONFLICT (key, queue_name)
+            DO UPDATE SET value = \(value)
+            """,
+            logger: self.logger
+        )
+    }
+
+    /// Acquire metadata lock
+    ///
+    /// - Parameters:
+    ///   - key: Metadata key
+    ///   - id: Lock identifier
+    ///   - expiresIn: When lock will expire
+    /// - Returns: If lock was acquired
+    @inlinable
+    public func acquireLock(key: String, id: ByteBuffer, expiresIn: TimeInterval) async throws -> Bool {
+        let expires = Date.now + expiresIn
+        // insert key, value, expiration into table. On conflict with key and queue_name only set value and
+        // expiration if expiration is out of date or value is the same
+        let stream = try await self.client.query(
+            """
+            INSERT INTO swift_jobs.metadata (key, value, expires, queue_name)
+            VALUES (\(key), \(id), \(expires), \(self.configuration.queueName))
+            ON CONFLICT (key, queue_name)
+            DO UPDATE
+            SET value = \(id), expires = \(expires)
+            WHERE swift_jobs.metadata.expires <= now()
+            OR swift_jobs.metadata.value = \(id)
+            RETURNING value
+            """,
+            logger: self.logger
+        )
+        for try await value in stream.decode(ByteBuffer.self) {
+            return value == id
+        }
+        return false
+    }
+
+    /// Release metadata lock
+    ///
+    /// - Parameters:
+    ///   - key: Metadata key
+    ///   - id: Lock identifier
+    @inlinable
+    public func releaseLock(key: String, id: ByteBuffer) async throws {
+        _ = try await self.client.query(
+            """
+            DELETE FROM swift_jobs.metadata
+            WHERE key = \(key)
+            AND value = \(id)
+            AND queue_name = \(self.configuration.queueName)
+            """
+        )
     }
 }
 
