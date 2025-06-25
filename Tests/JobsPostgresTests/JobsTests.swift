@@ -2,7 +2,7 @@
 //
 // This source file is part of the Hummingbird server framework project
 //
-// Copyright (c) 2021-2021 the Hummingbird authors
+// Copyright (c) 2021-2025 the Hummingbird authors
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
@@ -1062,45 +1062,3 @@ struct JobsTests {
     }
 }
 
-struct TestExpectation {
-    struct Timeout: Error, CustomStringConvertible {
-        let waitingOn: String?
-
-        var description: String {
-            if let waitingOn {
-                "Timed out waiting on \(waitingOn)"
-            } else {
-                "Timed out"
-            }
-        }
-    }
-
-    let stream: AsyncStream<Void>
-    let cont: AsyncStream<Void>.Continuation
-
-    init() {
-        (self.stream, self.cont) = AsyncStream.makeStream()
-    }
-
-    func trigger() {
-        cont.yield()
-    }
-
-    func wait(for: String? = nil, count: Int = 1, timeout: Duration = .seconds(60)) async throws {
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
-                var iterator = self.stream.makeAsyncIterator()
-                for _ in 0..<count {
-                    await iterator.next()
-                }
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw Timeout(waitingOn: `for`)
-            }
-
-            try await group.next()
-            group.cancelAll()
-        }
-    }
-}
