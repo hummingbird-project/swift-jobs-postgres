@@ -15,10 +15,10 @@
 import Atomics
 import Foundation
 import Jobs
-import NIOConcurrencyHelpers
 import PostgresMigrations
 import PostgresNIO
 import ServiceLifecycle
+import Synchronization
 import Testing
 
 @testable import JobsPostgres
@@ -218,154 +218,6 @@ struct JobsTests {
 
             try await expectation.wait(for: "testBasic Job running", count: 10)
         }
-
-    }
-
-    @Test
-    func testDelayedJobs() async throws {
-        struct TestParameters: JobParameters {
-            static let jobName = "testDelayedJobs"
-            let value: Int
-        }
-        let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
-
-        let expectation = TestExpectation()
-        try await self.testJobQueue(numWorkers: 1) { jobQueue in
-            jobQueue.registerJob(parameters: TestParameters.self) { parameters, context in
-                context.logger.info("Parameters=\(parameters.value)")
-                jobExecutionSequence.withLockedValue {
-                    $0.append(parameters.value)
-                }
-                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
-                expectation.trigger()
-            }
-            try await jobQueue.push(
-                TestParameters(value: 1),
-                options: .init(
-                    delayUntil: Date.now.addingTimeInterval(1)
-                )
-            )
-            try await jobQueue.push(TestParameters(value: 5))
-
-            let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-            #expect(processingJobs.count == 2)
-
-            try await expectation.wait(for: "delayed job running", count: 2)
-
-            let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-            #expect(pendingJobs.count == 0)
-
-        }
-        #expect(jobExecutionSequence.withLockedValue { $0 } == [5, 1])
-    }
-
-    @Test func testJobPriorities() async throws {
-        struct TestParameters: JobParameters {
-            static let jobName = "testPriorityJobs"
-            let value: Int
-        }
-        let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
-
-        let jobQueue = try await self.createJobQueue(configuration: .init(queueName: "testJobPriorities"), function: #function)
-
-        let expectation = TestExpectation()
-        try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
-            queue.registerJob(parameters: TestParameters.self) { parameters, context in
-                context.logger.info("Parameters=\(parameters.value)")
-                jobExecutionSequence.withLockedValue {
-                    $0.append(parameters.value)
-                }
-                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
-                expectation.trigger()
-            }
-
-            try await queue.push(
-                TestParameters(value: 20),
-                options: .init(
-                    priority: .lowest
-                )
-            )
-
-            try await queue.push(
-                TestParameters(value: 2025),
-                options: .init(
-                    priority: .highest
-                )
-            )
-
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                let serviceGroup = ServiceGroup(services: [queue.processor()], logger: queue.logger)
-
-                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-                #expect(processingJobs.count == 2)
-
-                group.addTask {
-                    try await serviceGroup.run()
-                }
-
-                try await expectation.wait(for: "priority jobs running", count: 2)
-
-                let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-                #expect(pendingJobs.count == 0)
-                await serviceGroup.triggerGracefulShutdown()
-            }
-        }
-        #expect(jobExecutionSequence.withLockedValue { $0 } == [2025, 20])
-    }
-
-    @Test func testJobPrioritiesWithDelay() async throws {
-        struct TestParameters: JobParameters {
-            static let jobName = "testPriorityJobsWithDelay"
-            let value: Int
-        }
-        let expectation = TestExpectation()
-        let jobExecutionSequence: NIOLockedValueBox<[Int]> = .init([])
-
-        let jobQueue = try await self.createJobQueue(configuration: .init(queueName: "testJobPrioritiesWithDelay"), function: #function)
-
-        try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
-            queue.registerJob(parameters: TestParameters.self) { parameters, context in
-                context.logger.info("Parameters=\(parameters.value)")
-                jobExecutionSequence.withLockedValue {
-                    $0.append(parameters.value)
-                }
-                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
-                expectation.trigger()
-            }
-
-            try await queue.push(
-                TestParameters(value: 20),
-                options: .init(
-                    priority: .lower
-                )
-            )
-
-            try await queue.push(
-                TestParameters(value: 2025),
-                options: .init(
-                    delayUntil: Date.now.addingTimeInterval(1),
-                    priority: .higher
-                )
-            )
-
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                let serviceGroup = ServiceGroup(services: [queue.processor()], logger: queue.logger)
-
-                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-                #expect(processingJobs.count == 2)
-
-                group.addTask {
-                    try await serviceGroup.run()
-                }
-
-                try await expectation.wait(for: "delayed priority jobs running", count: 2)
-
-                let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-                #expect(pendingJobs.count == 0)
-                await serviceGroup.triggerGracefulShutdown()
-            }
-        }
-        #expect(jobExecutionSequence.withLockedValue { $0 } == [20, 2025])
     }
 
     @Test func testMultipleWorkers() async throws {
@@ -407,6 +259,153 @@ struct JobsTests {
         }
     }
 
+    @Test
+    func testDelayedJobs() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "testDelayedJobs"
+            let value: Int
+        }
+        let jobExecutionSequence: Mutex<[Int]> = .init([])
+
+        let expectation = TestExpectation()
+        try await self.testJobQueue(numWorkers: 1) { jobQueue in
+            jobQueue.registerJob(parameters: TestParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                jobExecutionSequence.withLock {
+                    $0.append(parameters.value)
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.trigger()
+            }
+            try await jobQueue.push(
+                TestParameters(value: 1),
+                options: .init(
+                    delayUntil: Date.now.addingTimeInterval(1)
+                )
+            )
+            try await jobQueue.push(TestParameters(value: 5))
+
+            let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+            #expect(processingJobs.count == 2)
+
+            try await expectation.wait(for: "delayed job running", count: 2)
+
+            let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+            #expect(pendingJobs.count == 0)
+
+        }
+        #expect(jobExecutionSequence.withLock { $0 } == [5, 1])
+    }
+
+    @Test func testJobPriorities() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "testPriorityJobs"
+            let value: Int
+        }
+        let jobExecutionSequence: Mutex<[Int]> = .init([])
+
+        let jobQueue = try await self.createJobQueue(configuration: .init(queueName: "testJobPriorities"), function: #function)
+
+        let expectation = TestExpectation()
+        try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
+            queue.registerJob(parameters: TestParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                jobExecutionSequence.withLock {
+                    $0.append(parameters.value)
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.trigger()
+            }
+
+            try await queue.push(
+                TestParameters(value: 20),
+                options: .init(
+                    priority: .lowest
+                )
+            )
+
+            try await queue.push(
+                TestParameters(value: 2025),
+                options: .init(
+                    priority: .highest
+                )
+            )
+
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                let serviceGroup = ServiceGroup(services: [queue.processor()], logger: queue.logger)
+
+                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                #expect(processingJobs.count == 2)
+
+                group.addTask {
+                    try await serviceGroup.run()
+                }
+
+                try await expectation.wait(for: "priority jobs running", count: 2)
+
+                let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                #expect(pendingJobs.count == 0)
+                await serviceGroup.triggerGracefulShutdown()
+            }
+        }
+        #expect(jobExecutionSequence.withLock { $0 } == [2025, 20])
+    }
+
+    @Test func testJobPrioritiesWithDelay() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "testPriorityJobsWithDelay"
+            let value: Int
+        }
+        let expectation = TestExpectation()
+        let jobExecutionSequence: Mutex<[Int]> = .init([])
+
+        let jobQueue = try await self.createJobQueue(configuration: .init(queueName: "testJobPrioritiesWithDelay"), function: #function)
+
+        try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
+            queue.registerJob(parameters: TestParameters.self) { parameters, context in
+                context.logger.info("Parameters=\(parameters.value)")
+                jobExecutionSequence.withLock {
+                    $0.append(parameters.value)
+                }
+                try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
+                expectation.trigger()
+            }
+
+            try await queue.push(
+                TestParameters(value: 20),
+                options: .init(
+                    priority: .lower
+                )
+            )
+
+            try await queue.push(
+                TestParameters(value: 2025),
+                options: .init(
+                    delayUntil: Date.now.addingTimeInterval(1),
+                    priority: .higher
+                )
+            )
+
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                let serviceGroup = ServiceGroup(services: [queue.processor()], logger: queue.logger)
+
+                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                #expect(processingJobs.count == 2)
+
+                group.addTask {
+                    try await serviceGroup.run()
+                }
+
+                try await expectation.wait(for: "delayed priority jobs running", count: 2)
+
+                let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                #expect(pendingJobs.count == 0)
+                await serviceGroup.triggerGracefulShutdown()
+            }
+        }
+        #expect(jobExecutionSequence.withLock { $0 } == [20, 2025])
+    }
+
     @Test func testErrorRetryCount() async throws {
         struct TestParameters: JobParameters {
             static let jobName = "testErrorRetryCount"
@@ -438,7 +437,7 @@ struct JobsTests {
             static let jobName = "testErrorRetryAndThenSucceed"
         }
         let expectation = TestExpectation()
-        let currentJobTryCount: NIOLockedValueBox<Int> = .init(0)
+        let currentJobTryCount: Mutex<Int> = .init(0)
         struct FailedError: Error {}
         try await self.testJobQueue(numWorkers: 1) { jobQueue in
             jobQueue.registerJob(
@@ -446,12 +445,12 @@ struct JobsTests {
                 retryStrategy: .exponentialJitter(maxAttempts: 3, maxBackoff: .milliseconds(10))
             ) { _, _ in
                 defer {
-                    currentJobTryCount.withLockedValue {
+                    currentJobTryCount.withLock {
                         $0 += 1
                     }
                 }
                 expectation.trigger()
-                if (currentJobTryCount.withLockedValue { $0 }) == 0 {
+                if (currentJobTryCount.withLock { $0 }) == 0 {
                     throw FailedError()
                 }
             }
@@ -465,7 +464,7 @@ struct JobsTests {
             let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
             #expect(pendingJobs.count == 0)
         }
-        #expect(currentJobTryCount.withLockedValue { $0 } == 2)
+        #expect(currentJobTryCount.withLock { $0 } == 2)
     }
 
     @Test func testJobSerialization() async throws {
@@ -530,19 +529,19 @@ struct JobsTests {
             static let jobName = "testFailToDecode"
             let value: String
         }
-        let string: NIOLockedValueBox<String> = .init("")
+        let string: Mutex<String> = .init("")
         let expectation = TestExpectation()
 
         try await self.testJobQueue(numWorkers: 4) { jobQueue in
             jobQueue.registerJob(parameters: TestStringParameter.self) { parameters, _ in
-                string.withLockedValue { $0 = parameters.value }
+                string.withLock { $0 = parameters.value }
                 expectation.trigger()
             }
             try await jobQueue.push(TestIntParameter(value: 2))
             try await jobQueue.push(TestStringParameter(value: "test"))
             try await expectation.wait()
         }
-        string.withLockedValue {
+        string.withLock {
             #expect($0 == "test")
         }
     }
@@ -668,51 +667,6 @@ struct JobsTests {
         }
     }
 
-    @Test func testMetadata() async throws {
-        let logger = Logger(label: "testMetadata")
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            let postgresClient = PostgresClient(
-                configuration: getPostgresConfiguration(),
-                backgroundLogger: logger
-            )
-            group.addTask {
-                await postgresClient.run()
-            }
-            let postgresMigrations = DatabaseMigrations()
-            let jobQueue = await PostgresJobQueue(
-                client: postgresClient,
-                migrations: postgresMigrations,
-                logger: logger
-            )
-            try await postgresMigrations.apply(client: postgresClient, groups: [.jobQueue], logger: logger, dryRun: false)
-
-            let value = ByteBuffer(string: "Testing metadata")
-            try await jobQueue.setMetadata(key: "test", value: value)
-            let metadata = try await jobQueue.getMetadata("test")
-            #expect(metadata == value)
-            let value2 = ByteBuffer(string: "Testing metadata again")
-            try await jobQueue.setMetadata(key: "test", value: value2)
-            let metadata2 = try await jobQueue.getMetadata("test")
-            #expect(metadata2 == value2)
-
-            // cancel postgres client task
-            group.cancelAll()
-        }
-    }
-
-    @Test func testMultipleQueueMetadata() async throws {
-        try await self.testJobQueue(numWorkers: 1, configuration: .init(queueName: "testMultipleQueueMetadata")) { jobQueue1 in
-            try await self.testJobQueue(numWorkers: 1, configuration: .init(queueName: "testMultipleQueueMetadata2")) { jobQueue2 in
-                try await jobQueue1.queue.setMetadata(key: "test", value: .init(string: "queue1"))
-                try await jobQueue2.queue.setMetadata(key: "test", value: .init(string: "queue2"))
-                let value1 = try await jobQueue1.queue.getMetadata("test")
-                let value2 = try await jobQueue2.queue.getMetadata("test")
-                #expect(value1.map { String(buffer: $0) } == "queue1")
-                #expect(value2.map { String(buffer: $0) } == "queue2")
-            }
-        }
-    }
-
     @Test func testResumableAndPausableJobs() async throws {
         struct TestParameters: JobParameters {
             static let jobName = "TestJob"
@@ -721,14 +675,14 @@ struct JobsTests {
             static let jobName = "ResumanableJob"
         }
         let expectation = TestExpectation()
-        let didResumableJobRun: NIOLockedValueBox<Bool> = .init(false)
-        let didTestJobRun: NIOLockedValueBox<Bool> = .init(false)
+        let didResumableJobRun: Mutex<Bool> = .init(false)
+        let didTestJobRun: Mutex<Bool> = .init(false)
 
         let jobQueue = try await self.createJobQueue(configuration: .init(queueName: "testResumableAndPausableJobs"), function: #function)
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, _ in
-                didTestJobRun.withLockedValue {
+                didTestJobRun.withLock {
                     $0 = true
                 }
                 try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
@@ -736,7 +690,7 @@ struct JobsTests {
             }
 
             queue.registerJob(parameters: ResumableJob.self) { parameters, _ in
-                didResumableJobRun.withLockedValue {
+                didResumableJobRun.withLock {
                     $0 = true
                 }
                 try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
@@ -781,8 +735,8 @@ struct JobsTests {
                 await serviceGroup.triggerGracefulShutdown()
             }
         }
-        #expect(didTestJobRun.withLockedValue { $0 } == true)
-        #expect(didResumableJobRun.withLockedValue { $0 } == true)
+        #expect(didTestJobRun.withLock { $0 } == true)
+        #expect(didResumableJobRun.withLock { $0 } == true)
     }
 
     @Test func testCancellableJob() async throws {
@@ -795,8 +749,8 @@ struct JobsTests {
             let value: Int
         }
         let expectation = TestExpectation()
-        let didRunCancelledJob: NIOLockedValueBox<Bool> = .init(false)
-        let didRunNoneCancelledJob: NIOLockedValueBox<Bool> = .init(false)
+        let didRunCancelledJob: Mutex<Bool> = .init(false)
+        let didRunNoneCancelledJob: Mutex<Bool> = .init(false)
 
         let jobQueue = try await self.createJobQueue(
             configuration: .init(
@@ -813,7 +767,7 @@ struct JobsTests {
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, context in
                 context.logger.info("Parameters=\(parameters.value)")
-                didRunCancelledJob.withLockedValue {
+                didRunCancelledJob.withLock {
                     $0 = true
                 }
                 try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
@@ -822,7 +776,7 @@ struct JobsTests {
 
             queue.registerJob(parameters: NoneCancelledJobParameters.self) { parameters, context in
                 context.logger.info("Parameters=\(parameters.value)")
-                didRunNoneCancelledJob.withLockedValue {
+                didRunNoneCancelledJob.withLock {
                     $0 = true
                 }
                 try await Task.sleep(for: .milliseconds(Int.random(in: 10..<50)))
@@ -863,8 +817,8 @@ struct JobsTests {
                 await serviceGroup.triggerGracefulShutdown()
             }
         }
-        #expect(didRunCancelledJob.withLockedValue { $0 } == false)
-        #expect(didRunNoneCancelledJob.withLockedValue { $0 } == true)
+        #expect(didRunCancelledJob.withLock { $0 } == false)
+        #expect(didRunNoneCancelledJob.withLock { $0 } == true)
     }
 
     @Test func testCompletedJobRetention() async throws {
@@ -1008,6 +962,51 @@ struct JobsTests {
                 #expect(zeroJobs.count == 0)
                 let jobCount2 = try await jobQueue2.queue.getJobs(withStatus: .failed)
                 #expect(jobCount2.count == 1)
+            }
+        }
+    }
+
+    @Test func testMetadata() async throws {
+        let logger = Logger(label: "testMetadata")
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            let postgresClient = PostgresClient(
+                configuration: getPostgresConfiguration(),
+                backgroundLogger: logger
+            )
+            group.addTask {
+                await postgresClient.run()
+            }
+            let postgresMigrations = DatabaseMigrations()
+            let jobQueue = await PostgresJobQueue(
+                client: postgresClient,
+                migrations: postgresMigrations,
+                logger: logger
+            )
+            try await postgresMigrations.apply(client: postgresClient, groups: [.jobQueue], logger: logger, dryRun: false)
+
+            let value = ByteBuffer(string: "Testing metadata")
+            try await jobQueue.setMetadata(key: "test", value: value)
+            let metadata = try await jobQueue.getMetadata("test")
+            #expect(metadata == value)
+            let value2 = ByteBuffer(string: "Testing metadata again")
+            try await jobQueue.setMetadata(key: "test", value: value2)
+            let metadata2 = try await jobQueue.getMetadata("test")
+            #expect(metadata2 == value2)
+
+            // cancel postgres client task
+            group.cancelAll()
+        }
+    }
+
+    @Test func testMultipleQueueMetadata() async throws {
+        try await self.testJobQueue(numWorkers: 1, configuration: .init(queueName: "testMultipleQueueMetadata")) { jobQueue1 in
+            try await self.testJobQueue(numWorkers: 1, configuration: .init(queueName: "testMultipleQueueMetadata2")) { jobQueue2 in
+                try await jobQueue1.queue.setMetadata(key: "test", value: .init(string: "queue1"))
+                try await jobQueue2.queue.setMetadata(key: "test", value: .init(string: "queue2"))
+                let value1 = try await jobQueue1.queue.getMetadata("test")
+                let value2 = try await jobQueue2.queue.getMetadata("test")
+                #expect(value1.map { String(buffer: $0) } == "queue1")
+                #expect(value2.map { String(buffer: $0) } == "queue2")
             }
         }
     }

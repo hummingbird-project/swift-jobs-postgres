@@ -15,10 +15,10 @@
 import Foundation
 import Jobs
 import Logging
-import NIOConcurrencyHelpers
 import NIOCore
 import PostgresMigrations
 import PostgresNIO
+import Synchronization
 
 /// Postgres Job queue implementation
 ///
@@ -147,7 +147,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     public let logger: Logger
     let migrations: DatabaseMigrations
     @usableFromInline
-    let isStopped: NIOLockedValueBox<Bool>
+    let isStopped: Mutex<Bool>
 
     /// Initialize a PostgresJobQueue
     public init(client: PostgresClient, migrations: DatabaseMigrations, configuration: Configuration = .init(), logger: Logger) async {
@@ -289,7 +289,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// stop serving jobs
     public func stop() async {
-        self.isStopped.withLockedValue { $0 = true }
+        self.isStopped.withLock { $0 = true }
     }
 
     /// shutdown queue once all active jobs have been processed
@@ -537,7 +537,7 @@ extension PostgresJobQueue {
         @inlinable
         public func next() async throws -> Element? {
             while true {
-                if self.queue.isStopped.withLockedValue({ $0 }) {
+                if self.queue.isStopped.withLock({ $0 }) {
                     return nil
                 }
 
