@@ -559,13 +559,11 @@ struct JobsTests {
         let succeededExpectation = TestExpectation()
         let job = JobDefinition(parameters: TestParameters.self) { _, _ in
             if firstTime.compareExchange(expected: true, desired: false, ordering: .relaxed).original {
-                print("FAILED")
                 failedExpectation.trigger()
                 throw RetryError()
             }
-            print("SUCCEEDED")
-            succeededExpectation.trigger()
             finished.store(true, ordering: .relaxed)
+            succeededExpectation.trigger()
         }
         let jobQueue = try await createJobQueue()
         jobQueue.registerJob(job)
