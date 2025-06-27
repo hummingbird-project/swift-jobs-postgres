@@ -1,10 +1,10 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 
 import PackageDescription
 
 let package = Package(
     name: "swift-jobs-postgres",
-    platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17)],
+    platforms: [.macOS(.v15), .iOS(.v18), .tvOS(.v18)],
     products: [
         .library(name: "JobsPostgres", targets: ["JobsPostgres"])
     ],
