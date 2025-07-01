@@ -20,14 +20,19 @@ import PostgresMigrations
 import PostgresNIO
 
 /// Parameters for Cleanup job
-public struct JobCleanupParameters: Sendable & Codable {
-    let failedJobs: PostgresJobQueue.JobCleanup
+public struct PostgresJobCleanupParameters: Sendable & Codable {
     let completedJobs: PostgresJobQueue.JobCleanup
+    let failedJobs: PostgresJobQueue.JobCleanup
     let cancelledJobs: PostgresJobQueue.JobCleanup
 
+    ///  Initialize PostgresJobCleanupParameters
+    /// - Parameters:
+    ///   - completedJobs: What to do with completed jobs
+    ///   - failedJobs: What to do with failed jobs
+    ///   - cancelledJobs: What to do with cancelled jobs
     public init(
-        failedJobs: PostgresJobQueue.JobCleanup = .doNothing,
         completedJobs: PostgresJobQueue.JobCleanup = .doNothing,
+        failedJobs: PostgresJobQueue.JobCleanup = .doNothing,
         cancelledJobs: PostgresJobQueue.JobCleanup = .doNothing
     ) {
         self.failedJobs = failedJobs
@@ -56,19 +61,19 @@ extension PostgresJobQueue {
     ///
     /// Use this with the ``/Jobs/JobSchedule`` to schedule a cleanup of
     /// failed, cancelled or completed jobs
-    public var cleanupJob: JobName<JobCleanupParameters> {
+    public var cleanupJob: JobName<PostgresJobCleanupParameters> {
         .init("_Jobs_PostgresCleanup_\(self.configuration.queueName)")
     }
 
     /// register clean up job on queue
     func registerCleanupJob() {
         self.registerJob(
-            JobDefinition(name: cleanupJob, parameters: JobCleanupParameters.self, retryStrategy: .dontRetry) { parameters, context in
+            JobDefinition(name: cleanupJob, parameters: PostgresJobCleanupParameters.self, retryStrategy: .dontRetry) { parameters, context in
                 try await self.cleanup(
-                    failedJobs: parameters.failedJobs,
-                    processingJobs: .doNothing,
                     pendingJobs: .doNothing,
+                    processingJobs: .doNothing,
                     completedJobs: parameters.completedJobs,
+                    failedJobs: parameters.failedJobs,
                     cancelledJobs: parameters.cancelledJobs,
                     logger: self.logger
                 )
@@ -90,18 +95,18 @@ extension PostgresJobQueue {
     /// the job queue.
     ///
     /// - Parameters:
-    ///   - failedJobs: What to do with jobs tagged as failed
-    ///   - processingJobs: What to do with jobs tagged as processing
     ///   - pendingJobs: What to do with jobs tagged as pending
+    ///   - processingJobs: What to do with jobs tagged as processing
     ///   - completedJobs: What to do with jobs tagged as completed
+    ///   - failedJobs: What to do with jobs tagged as failed
     ///   - cancelledJobs: What to do with jobs tagged as cancelled
     ///   - logger: Optional logger to use when performing cleanup
     /// - Throws:
     public func cleanup(
-        failedJobs: JobCleanup = .doNothing,
-        processingJobs: JobCleanup = .doNothing,
         pendingJobs: JobCleanup = .doNothing,
+        processingJobs: JobCleanup = .doNothing,
         completedJobs: JobCleanup = .doNothing,
+        failedJobs: JobCleanup = .doNothing,
         cancelledJobs: JobCleanup = .doNothing,
         logger: Logger? = nil
     ) async throws {

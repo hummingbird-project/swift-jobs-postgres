@@ -32,20 +32,20 @@ extension PostgresJobQueue {
         }
 
         /// Jobs with status cancelled
-        public var cancelled: RetainData
+        public var cancelledJobs: RetainData
         /// Jobs with status completed
-        public var completed: RetainData
+        public var completedJobs: RetainData
         /// Jobs with status failed
-        public var failed: RetainData
+        public var failedJobs: RetainData
 
         public init(
-            cancelled: RetainData = .doNotRetain,
-            completed: RetainData = .doNotRetain,
-            failed: RetainData = .retain
+            completedJobs: RetainData = .doNotRetain,
+            failedJobs: RetainData = .retain,
+            cancelledJobs: RetainData = .doNotRetain
         ) {
-            self.cancelled = cancelled
-            self.completed = completed
-            self.failed = failed
+            self.cancelledJobs = cancelledJobs
+            self.completedJobs = completedJobs
+            self.failedJobs = failedJobs
         }
     }
 }

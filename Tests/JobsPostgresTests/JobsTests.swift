@@ -96,9 +96,9 @@ struct JobsTests {
                     let logger = jobQueue.queue.logger
                     try await migrations.apply(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
                     try await jobQueue.queue.cleanup(
-                        failedJobs: failedJobsInitialization,
+                        pendingJobs: pendingJobsInitialization,
                         processingJobs: processingJobsInitialization,
-                        pendingJobs: pendingJobsInitialization
+                        failedJobs: failedJobsInitialization
                     )
                     let value = try await test(jobQueue)
                     await serviceGroup.triggerGracefulShutdown()
@@ -144,9 +144,9 @@ struct JobsTests {
                     let logger = jobQueue.queue.logger
                     try await migrations.apply(client: client, groups: [.jobQueue], logger: logger, dryRun: false)
                     try await jobQueue.queue.cleanup(
-                        failedJobs: failedJobsInitialization,
+                        pendingJobs: pendingJobsInitialization,
                         processingJobs: processingJobsInitialization,
-                        pendingJobs: pendingJobsInitialization
+                        failedJobs: failedJobsInitialization
                     )
                     let value = try await test(jobQueue)
                     await serviceGroup.triggerGracefulShutdown()
@@ -498,9 +498,9 @@ struct JobsTests {
             configuration: .init(
                 queueName: "testShutdownJob",
                 retentionPolicy: .init(
-                    cancelled: .doNotRetain,
-                    completed: .doNotRetain,
-                    failed: .doNotRetain
+                    completedJobs: .doNotRetain,
+                    failedJobs: .doNotRetain,
+                    cancelledJobs: .doNotRetain,
                 )
             )
         ) { jobQueue in
@@ -648,8 +648,8 @@ struct JobsTests {
             }
             try await postgresMigrations.apply(client: postgresClient, groups: [.jobQueue], logger: logger, dryRun: false)
             try await postgresMigrations2.apply(client: postgresClient, groups: [.jobQueue], logger: logger, dryRun: false)
-            try await jobQueue.queue.cleanup(failedJobs: .remove, processingJobs: .remove)
-            try await jobQueue2.queue.cleanup(failedJobs: .remove, processingJobs: .remove)
+            try await jobQueue.queue.cleanup(processingJobs: .remove, failedJobs: .remove)
+            try await jobQueue2.queue.cleanup(processingJobs: .remove, failedJobs: .remove)
             do {
                 for i in 0..<100 {
                     try await jobQueue.push(TestParameters(value: i))
@@ -754,9 +754,9 @@ struct JobsTests {
             configuration: .init(
                 queueName: "testCancellableJob",
                 retentionPolicy: .init(
-                    cancelled: .doNotRetain,
-                    completed: .doNotRetain,
-                    failed: .doNotRetain
+                    completedJobs: .doNotRetain,
+                    failedJobs: .doNotRetain,
+                    cancelledJobs: .doNotRetain
                 )
             ),
             function: #function
@@ -827,7 +827,7 @@ struct JobsTests {
         let expectation = TestExpectation()
         try await self.testJobQueue(
             numWorkers: 1,
-            configuration: .init(retentionPolicy: .init(completed: .retain))
+            configuration: .init(retentionPolicy: .init(completedJobs: .retain))
         ) { jobQueue in
             jobQueue.registerJob(parameters: TestParameters.self) { parameters, context in
                 context.logger.info("Parameters=\(parameters.value)")
@@ -852,7 +852,7 @@ struct JobsTests {
 
     @Test func testCancelledJobRetention() async throws {
         let jobQueue = try await self.createJobQueue(
-            configuration: .init(queueName: "testCancelledJobRetention", retentionPolicy: .init(cancelled: .retain))
+            configuration: .init(queueName: "testCancelledJobRetention", retentionPolicy: .init(cancelledJobs: .retain))
         )
         let jobName = JobName<Int>("testCancelledJobRetention")
         jobQueue.registerJob(name: jobName) { _, _ in }
@@ -914,13 +914,13 @@ struct JobsTests {
     @Test func testCleanupJob() async throws {
         try await self.testJobQueue(
             numWorkers: 1,
-            configuration: .init(queueName: "testCleanupJob", retentionPolicy: .init(failed: .retain))
+            configuration: .init(queueName: "testCleanupJob", retentionPolicy: .init(failedJobs: .retain))
         ) { jobQueue in
             try await self.testJobQueue(
                 numWorkers: 1,
                 configuration: .init(
                     queueName: "testCleanupJob2",
-                    retentionPolicy: .init(failed: .retain)
+                    retentionPolicy: .init(failedJobs: .retain)
                 )
             ) { jobQueue2 in
                 let (stream, cont) = AsyncStream.makeStream(of: Void.self)
