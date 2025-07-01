@@ -500,7 +500,7 @@ struct JobsTests {
                 retentionPolicy: .init(
                     completedJobs: .doNotRetain,
                     failedJobs: .doNotRetain,
-                    cancelledJobs: .doNotRetain,
+                    cancelledJobs: .doNotRetain
                 )
             )
         ) { jobQueue in
