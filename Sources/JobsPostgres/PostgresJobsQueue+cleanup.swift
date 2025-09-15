@@ -24,20 +24,24 @@ public struct PostgresJobCleanupParameters: Sendable & Codable {
     let completedJobs: PostgresJobQueue.JobCleanup
     let failedJobs: PostgresJobQueue.JobCleanup
     let cancelledJobs: PostgresJobQueue.JobCleanup
+    let pausedJobs: PostgresJobQueue.JobCleanup
 
     ///  Initialize PostgresJobCleanupParameters
     /// - Parameters:
     ///   - completedJobs: What to do with completed jobs
     ///   - failedJobs: What to do with failed jobs
     ///   - cancelledJobs: What to do with cancelled jobs
+    ///   - pausedJobs: What to do with paused jobs
     public init(
         completedJobs: PostgresJobQueue.JobCleanup = .doNothing,
         failedJobs: PostgresJobQueue.JobCleanup = .doNothing,
-        cancelledJobs: PostgresJobQueue.JobCleanup = .doNothing
+        cancelledJobs: PostgresJobQueue.JobCleanup = .doNothing,
+        pausedJobs: PostgresJobQueue.JobCleanup = .doNothing
     ) {
         self.failedJobs = failedJobs
         self.completedJobs = completedJobs
         self.cancelledJobs = cancelledJobs
+        self.pausedJobs = pausedJobs
     }
 }
 
@@ -51,9 +55,13 @@ extension PostgresJobQueue {
         }
         let rawValue: RawValue
 
+        /// Do nothing to jobs
         public static var doNothing: Self { .init(rawValue: .doNothing) }
+        /// Re-queue jobs for running again
         public static var rerun: Self { .init(rawValue: .rerun) }
+        /// Delete jobs
         public static var remove: Self { .init(rawValue: .remove(maxAge: nil)) }
+        /// Delete jobs that are older than maxAge
         public static func remove(maxAge: Duration) -> Self { .init(rawValue: .remove(maxAge: maxAge)) }
     }
 
@@ -75,6 +83,7 @@ extension PostgresJobQueue {
                     completedJobs: parameters.completedJobs,
                     failedJobs: parameters.failedJobs,
                     cancelledJobs: parameters.cancelledJobs,
+                    pausedJobs: parameters.pausedJobs,
                     logger: self.logger
                 )
             }
@@ -90,9 +99,9 @@ extension PostgresJobQueue {
     /// these jobs so they are run again.
     ///
     /// The job queue needs to be running when you call cleanup. You can call `cleanup` with
-    /// `failedJobs`` set to whatever you like at any point to re-queue failed jobs. Moving processing
-    /// or pending jobs should only be done if you are certain there is nothing else processing
-    /// the job queue.
+    /// `failedJobs`, `cancelledJobs`, `completedJobs` or `pausedJobs` set to whatever you like
+    /// at any point to re-queue failed jobs. Moving processing or pending jobs should only be
+    /// done if you are certain there is nothing else processing the job queue.
     ///
     /// - Parameters:
     ///   - pendingJobs: What to do with jobs tagged as pending
@@ -100,6 +109,7 @@ extension PostgresJobQueue {
     ///   - completedJobs: What to do with jobs tagged as completed
     ///   - failedJobs: What to do with jobs tagged as failed
     ///   - cancelledJobs: What to do with jobs tagged as cancelled
+    ///   - pausedJobs: What to do with jobs tagged as paused
     ///   - logger: Optional logger to use when performing cleanup
     /// - Throws:
     public func cleanup(
@@ -108,6 +118,7 @@ extension PostgresJobQueue {
         completedJobs: JobCleanup = .doNothing,
         failedJobs: JobCleanup = .doNothing,
         cancelledJobs: JobCleanup = .doNothing,
+        pausedJobs: JobCleanup = .doNothing,
         logger: Logger? = nil
     ) async throws {
         let logger = logger ?? self.logger
@@ -121,6 +132,7 @@ extension PostgresJobQueue {
                 try await self.updateJobsOnInit(withStatus: .failed, onInit: failedJobs, connection: connection)
                 try await self.updateJobsOnInit(withStatus: .completed, onInit: completedJobs, connection: connection)
                 try await self.updateJobsOnInit(withStatus: .cancelled, onInit: cancelledJobs, connection: connection)
+                try await self.updateJobsOnInit(withStatus: .paused, onInit: pausedJobs, connection: connection)
             }
         } catch let error as PSQLError {
             logger.error(
