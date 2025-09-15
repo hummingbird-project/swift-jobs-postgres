@@ -714,18 +714,18 @@ struct JobsTests {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 let serviceGroup = ServiceGroup(services: [queue.processor()], logger: queue.logger)
 
-                let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-                #expect(processingJobs.count == 1)
-
-                group.addTask {
-                    try await serviceGroup.run()
-                }
+                let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+                #expect(pendingJobs.count == 1)
 
                 let processingJobCount = try await jobQueue.queue.getJobs(withStatus: .processing)
                 #expect(processingJobCount.count == 0)
 
                 let pausedJobs = try await jobQueue.queue.getJobs(withStatus: .paused)
                 #expect(pausedJobs.count == 1)
+
+                group.addTask {
+                    try await serviceGroup.run()
+                }
 
                 try await jobQueue.resumeJob(jobID: resumableJob)
 
