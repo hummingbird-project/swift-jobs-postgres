@@ -92,16 +92,15 @@ extension PostgresJobQueue {
 
     ///  Cleanup job queues
     ///
-    /// This function is used to re-run or delete jobs in a certain state. Failed jobs can be
-    /// pushed back into the pending queue to be re-run or removed. When called at startup in
-    /// theory no job should be set to processing, or set to pending but not in the queue. but if
-    /// your job server crashes these states are possible, so we also provide options to re-queue
-    /// these jobs so they are run again.
+    /// This function is used to re-run or delete jobs in a certain state. Failed, completed,
+    /// cancelled and paused jobs can be pushed back into the pending queue to be re-run or removed.
+    /// When called at startup in theory no job should be set to processing, or set to pending but
+    /// not in the queue. but if your job server crashes these states are possible, so we also provide
+    /// options to re-queue these jobs so they are run again.
     ///
-    /// The job queue needs to be running when you call cleanup. You can call `cleanup` with
-    /// `failedJobs`, `cancelledJobs`, `completedJobs` or `pausedJobs` set to whatever you like
-    /// at any point to re-queue failed jobs. Moving processing or pending jobs should only be
-    /// done if you are certain there is nothing else processing the job queue.
+    /// You can call `cleanup` with `failedJobs`, `completedJobs`, `cancelledJobs` or `pausedJobs` set
+    /// to whatever you like at any point to re-queue failed jobs. Moving processing or pending jobs
+    /// should only be done if you are certain there is nothing processing the job queue.
     ///
     /// - Parameters:
     ///   - pendingJobs: What to do with jobs tagged as pending
