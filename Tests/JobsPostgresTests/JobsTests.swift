@@ -880,6 +880,36 @@ struct JobsTests {
         }
     }
 
+    @Test func testPausedJobRetention() async throws {
+        let jobQueue = try await self.createJobQueue(
+            configuration: .init(queueName: "testPausedJobRetention")
+        )
+        let jobName = JobName<Int>("testPausedJobRetention")
+        jobQueue.registerJob(name: jobName) { _, _ in }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                // run postgres client
+                await jobQueue.queue.client.run()
+            }
+            try await jobQueue.queue.migrations.apply(client: jobQueue.queue.client, logger: jobQueue.logger, dryRun: false)
+
+            let jobId = try await jobQueue.push(jobName, parameters: 1)
+            let jobId2 = try await jobQueue.push(jobName, parameters: 2)
+
+            try await jobQueue.pauseJob(jobID: jobId)
+            try await jobQueue.pauseJob(jobID: jobId2)
+
+            var cancelledJobs = try await jobQueue.queue.getJobs(withStatus: .paused)
+            #expect(cancelledJobs.count == 2)
+            try await jobQueue.queue.cleanup(pausedJobs: .remove(maxAge: .seconds(0)))
+            cancelledJobs = try await jobQueue.queue.getJobs(withStatus: .paused)
+            #expect(cancelledJobs.count == 0)
+
+            group.cancelAll()
+        }
+    }
+
     @Test func testCleanupProcessingJobs() async throws {
         let jobQueue = try await self.createJobQueue()
         let jobName = JobName<Int>("testCleanupProcessingJobs")
