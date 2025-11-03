@@ -9,7 +9,8 @@ let package = Package(
         .library(name: "JobsPostgres", targets: ["JobsPostgres"])
     ],
     dependencies: [
-        .package(url: "https://github.com/hummingbird-project/swift-jobs.git", from: "1.0.0"),
+        // MARK: update to a released version before publishing
+        .package(url: "https://github.com/thoven87/swift-jobs.git", branch: "breaking-changes"),
         .package(url: "https://github.com/hummingbird-project/postgres-migrations.git", from: "1.0.0"),
         .package(url: "https://github.com/vapor/postgres-nio.git", from: "1.25.0"),
     ],
