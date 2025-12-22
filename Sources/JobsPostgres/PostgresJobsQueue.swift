@@ -74,14 +74,9 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     public struct JobOptions: JobOptionsProtocol {
         /// Delay running job until
         public var delayUntil: Date
+
         /// Priority for this job
         public var priority: JobPriority
-
-        /// Default initializer for JobOptions
-        public init() {
-            self.delayUntil = .now
-            self.priority = .normal
-        }
 
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
