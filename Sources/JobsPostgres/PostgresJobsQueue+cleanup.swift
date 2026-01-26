@@ -182,7 +182,7 @@ extension PostgresJobQueue {
                 SELECT
                     id, worker_id
                 FROM swift_jobs.jobs
-                WHERE status = \(Status.pending) AND queue_name = \(configuration.queueName)
+                WHERE status = \(Status.processing) AND queue_name = \(configuration.queueName)
                 """,
                 logger: self.logger
             )

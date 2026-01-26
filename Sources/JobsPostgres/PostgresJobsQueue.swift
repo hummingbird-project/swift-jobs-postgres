@@ -340,7 +340,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                     return .nothing
                 }
                 // set job status to processing
-                try await self.setPending(jobID: jobID, connection: connection)
+                try await self.setProcessing(jobID: jobID, connection: connection)
 
                 // select job from job table
                 let stream2 = try await connection.query(
@@ -485,11 +485,11 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     }
 
     @usableFromInline
-    func setPending(jobID: JobID, connection: PostgresConnection) async throws {
+    func setProcessing(jobID: JobID, connection: PostgresConnection) async throws {
         try await connection.query(
             """
             UPDATE swift_jobs.jobs
-            SET status = \(Status.pending),
+            SET status = \(Status.processing),
                 last_modified = \(Date.now),
                 worker_id = \(self.workerContext.id)
             WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
