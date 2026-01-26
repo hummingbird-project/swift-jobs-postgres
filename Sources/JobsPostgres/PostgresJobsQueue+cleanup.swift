@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+import ExtrasBase64
 import Foundation
 import Jobs
 import Logging
@@ -45,6 +46,18 @@ public struct PostgresJobCleanupParameters: Sendable & Codable {
     }
 }
 
+/// Parameters for cleanup of jobs stuck in processing
+public struct PostgresProcessingJobCleanupParameters: Sendable, Codable {
+    let maxJobsToProcess: Int
+
+    ///  Initialize ValkeyProcessingJobCleanupParameters
+    /// - Parameters:
+    ///   - maxJobsToProcess: Maximum number of jobs to process in one go
+    public init(maxJobsToProcess: Int) {
+        self.maxJobsToProcess = maxJobsToProcess
+    }
+}
+
 extension PostgresJobQueue {
     /// what to do with failed/processing jobs from last time queue was handled
     public struct JobCleanup: Sendable, Codable {
@@ -73,8 +86,15 @@ extension PostgresJobQueue {
         .init("_Jobs_PostgresCleanup_\(self.configuration.queueName)")
     }
 
+    /// clean of hung processing jobs job name.
+    ///
+    /// Use this with the ``/Jobs/JobSchedule`` to schedule a cleanup hung processing jobs
+    public var cleanupProcessingJob: JobName<PostgresProcessingJobCleanupParameters> {
+        .init("_Jobs_ValkeyProcessingCleanup_\(self.configuration.queueName)")
+    }
+
     /// register clean up job on queue
-    func registerCleanupJob() {
+    func registerCleanupJobs() {
         self.registerJob(
             JobDefinition(name: cleanupJob, parameters: PostgresJobCleanupParameters.self, retryStrategy: .dontRetry) { parameters, context in
                 try await self.cleanup(
@@ -88,6 +108,12 @@ extension PostgresJobQueue {
                 )
             }
         )
+        self.registerJob(
+            JobDefinition(name: cleanupProcessingJob, retryStrategy: .dontRetry) { parameters, context in
+                try await self.cleanupProcessingJobs(maxJobsToProcess: parameters.maxJobsToProcess)
+            }
+        )
+
     }
 
     ///  Cleanup job queues
@@ -140,6 +166,49 @@ extension PostgresJobQueue {
                     "Error": "\(String(reflecting: error))"
                 ]
             )
+            throw error
+        }
+    }
+
+    /// Clean up jobs stuck in processing because their worker is no longer active
+    public func cleanupProcessingJobs(maxJobsToProcess: Int) async throws {
+        do {
+            let bytes: [UInt8] = (0..<16).map { _ in UInt8.random(in: 0...255) }
+            let lockID = ByteBuffer(string: Base64.encodeToString(bytes: bytes))
+            var workersInactive: Set<String> = .init()
+
+            let stream = try await self.client.query(
+                """
+                SELECT
+                    id, worker_id
+                FROM swift_jobs.jobs
+                WHERE status = \(Status.pending) AND queue_name = \(configuration.queueName)
+                """,
+                logger: self.logger
+            )
+            for try await (id, workerID) in stream.decode((JobID, String?).self, context: .default) {
+                guard let workerID else { continue }
+                var inactive = workersInactive.contains(workerID)
+                if !inactive {
+                    inactive = try await self.acquireLock(key: .jobWorkerActiveLock(workerID: workerID), id: lockID, expiresIn: 10)
+                }
+                if inactive {
+                    // we acquired the lock so the worker must have gone down, reschedule the job
+                    workersInactive.insert(workerID)
+                    self.logger.debug("Re-scheduling Job", metadata: ["JobID": .stringConvertible(id)])
+                    try await self.client.withTransaction(logger: logger) { connection in
+                        try await setStatus(jobID: id, status: .pending, connection: connection)
+                        try await addToQueue(
+                            jobID: id,
+                            queueName: configuration.queueName,
+                            options: .init(),
+                            connection: connection
+                        )
+                    }
+                }
+            }
+        } catch {
+            self.logger.info("Cleanup of hung processing jobs failed: \(error)")
             throw error
         }
     }

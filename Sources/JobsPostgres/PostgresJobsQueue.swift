@@ -150,6 +150,8 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     let migrations: DatabaseMigrations
     @usableFromInline
     let isStopped: Mutex<Bool>
+    /// Context information for worker
+    public let workerContext: JobWorkerContext
 
     /// Initialize a PostgresJobQueue
     public init(client: PostgresClient, migrations: DatabaseMigrations, configuration: Configuration = .init(), logger: Logger) async {
@@ -159,7 +161,8 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         self.logger = logger
         self.isStopped = .init(false)
         self.migrations = migrations
-        self.registerCleanupJob()
+        self.workerContext = JobWorkerContext(id: UUID().uuidString, metadata: [:])
+        self.registerCleanupJobs()
         await Self.addMigrations(to: self.migrations)
     }
 
@@ -167,11 +170,14 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         self.logger.info("Waiting for JobQueue migrations")
         /// Need migrations to have completed before job queue processing can start
         try await self.migrations.waitUntilCompleted()
+        /// Cleanup any processing jobs whose workers have crashed or hung
+        try await self.cleanupProcessingJobs(maxJobsToProcess: .max)
     }
 
     package static func addMigrations(to migrations: DatabaseMigrations) async {
         await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
         await migrations.add(CreateJobMetadataMigration(), skipDuplicates: true)
+        await migrations.add(CreateWorkerIDColumnMigration(), skipDuplicates: true)
     }
 
     ///  Cancel job
@@ -334,7 +340,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                     return .nothing
                 }
                 // set job status to processing
-                try await self.setStatus(jobID: jobID, status: .processing, connection: connection)
+                try await self.setPending(jobID: jobID, connection: connection)
 
                 // select job from job table
                 let stream2 = try await connection.query(
@@ -472,6 +478,20 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             UPDATE swift_jobs.jobs
             SET status = \(status),
                 last_modified = \(Date.now)
+            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
+            """,
+            logger: self.logger
+        )
+    }
+
+    @usableFromInline
+    func setPending(jobID: JobID, connection: PostgresConnection) async throws {
+        try await connection.query(
+            """
+            UPDATE swift_jobs.jobs
+            SET status = \(Status.pending),
+                last_modified = \(Date.now),
+                worker_id = \(self.workerContext.id)
             WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
             """,
             logger: self.logger

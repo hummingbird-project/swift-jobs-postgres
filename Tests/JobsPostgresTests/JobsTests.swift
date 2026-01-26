@@ -1089,4 +1089,51 @@ struct JobsTests {
             }
         }
     }
+
+    @Test func testCleanupHungProcessingJobs() async throws {
+        // Create queue, add job to it and push onto processing queue
+        let jobQueue = try await self.createJobQueue(
+            configuration: .init(queueName: #function)
+        )
+        async let _ = jobQueue.queue.client.run()
+        let (stream, cont) = AsyncStream.makeStream(of: Void.self)
+        struct BarrierJob: JobParameters {
+            static var jobName: String { "barrier" }
+        }
+        jobQueue.registerJob(parameters: BarrierJob.self) { parameters, context in
+            cont.yield()
+        }
+        try await jobQueue.queue.migrations.apply(client: jobQueue.queue.client, logger: jobQueue.logger, dryRun: false)
+        try await jobQueue.queue.waitUntilReady()
+        try await jobQueue.push(BarrierJob())
+        // push job onto processing queue
+        let jobIterator = jobQueue.queue.makeAsyncIterator()
+        _ = try #require(try await jobIterator.next())
+
+        /// Create a second queue, and start processing. Job set to processing on first queue
+        /// should be rescheduled as it is in processing state but the related driver active lock
+        /// is not there
+        let jobQueue2 = try await self.createJobQueue(
+            configuration: .init(queueName: #function)
+        )
+        jobQueue2.registerJob(parameters: BarrierJob.self) { parameters, context in
+            cont.yield()
+        }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            let serviceGroup = ServiceGroup(
+                configuration: .init(
+                    services: [jobQueue2.queue.client, jobQueue2.processor(options: .init())],
+                    gracefulShutdownSignals: [.sigterm, .sigint],
+                    logger: Logger(label: "JobQueueService")
+                )
+            )
+            group.addTask {
+                try await serviceGroup.run()
+            }
+            try await jobQueue2.queue.migrations.apply(client: jobQueue.queue.client, logger: jobQueue.logger, dryRun: false)
+
+            _ = await stream.first { _ in true }
+            await serviceGroup.triggerGracefulShutdown()
+        }
+    }
 }
