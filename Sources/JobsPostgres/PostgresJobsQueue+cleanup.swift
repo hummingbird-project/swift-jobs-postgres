@@ -183,6 +183,7 @@ extension PostgresJobQueue {
                     id, worker_id
                 FROM swift_jobs.jobs
                 WHERE status = \(Status.processing) AND queue_name = \(configuration.queueName)
+                FETCH FIRST \(maxJobsToProcess) ROWS ONLY
                 """,
                 logger: self.logger
             )
