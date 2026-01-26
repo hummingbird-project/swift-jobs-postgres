@@ -22,7 +22,7 @@ jobs:
         image:
           - 'swift:6.0'
           - 'swift:6.1'
-          - 'swiftlang/swift:nightly-6.2-noble'
+          - 'swift:6.2'
         postgres-image:
           - 'postgres:17'
           - 'postgres:16'
