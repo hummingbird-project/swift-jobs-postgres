@@ -145,7 +145,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     @usableFromInline
     let isStopped: Mutex<Bool>
     /// Context information for worker
-    public let workerContext: JobWorkerContext
+    public let context: JobQueueContext
 
     /// Initialize a PostgresJobQueue
     public init(client: PostgresClient, migrations: DatabaseMigrations, configuration: Configuration = .init(), logger: Logger) async {
@@ -155,7 +155,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         self.logger = logger
         self.isStopped = .init(false)
         self.migrations = migrations
-        self.workerContext = JobWorkerContext(id: UUID().uuidString, metadata: [:])
+        self.context = JobQueueContext(workerID: UUID().uuidString, queueName: configuration.queueName, metadata: [:])
         self.registerCleanupJobs()
         await Self.addMigrations(to: self.migrations)
     }
@@ -485,7 +485,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             UPDATE swift_jobs.jobs
             SET status = \(Status.processing),
                 last_modified = \(Date.now),
-                worker_id = \(self.workerContext.id)
+                worker_id = \(self.context.workerID)
             WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
             """,
             logger: self.logger
