@@ -72,9 +72,15 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         /// Priority for this job
         public var priority: JobPriority
 
+        /// Default initializer for JobOptions
+        public init() {
+            self.delayUntil = .now
+            self.priority = .normal
+        }
+
         ///  Initializer for JobOptions
         /// - Parameter delayUntil: Whether job execution should be delayed until a later date
-        public init(delayUntil: Date = .now) {
+        public init(delayUntil: Date) {
             self.delayUntil = delayUntil
             self.priority = .normal
         }
