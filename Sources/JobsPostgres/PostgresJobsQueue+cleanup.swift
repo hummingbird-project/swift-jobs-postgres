@@ -44,7 +44,7 @@ public struct PostgresJobCleanupParameters: Sendable & Codable {
 public struct PostgresProcessingJobCleanupParameters: Sendable, Codable {
     let maxJobsToProcess: Int
 
-    ///  Initialize ValkeyProcessingJobCleanupParameters
+    ///  Initialize PostgresProcessingJobCleanupParameters
     /// - Parameters:
     ///   - maxJobsToProcess: Maximum number of jobs to process in one go
     public init(maxJobsToProcess: Int) {
@@ -84,7 +84,7 @@ extension PostgresJobQueue {
     ///
     /// Use this with the ``/Jobs/JobSchedule`` to schedule a cleanup hung processing jobs
     public var cleanupProcessingJob: JobName<PostgresProcessingJobCleanupParameters> {
-        .init("_Jobs_ValkeyProcessingCleanup_\(self.configuration.queueName)")
+        .init("_Jobs_PostgresProcessingCleanup_\(self.configuration.queueName)")
     }
 
     /// register clean up job on queue
