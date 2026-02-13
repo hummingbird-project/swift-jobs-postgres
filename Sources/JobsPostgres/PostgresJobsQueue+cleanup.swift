@@ -108,6 +108,20 @@ extension PostgresJobQueue {
             }
         )
 
+        // Backward compatibility: register with old Valkey name for existing scheduled jobs.
+        // WARNING: This is for backward compatibility only and will be removed in the next major release.
+        // This ensures that Jobs scheduled with the legacy
+        // `_Jobs_ValkeyProcessingCleanup_` name will still be processed.
+
+        var legacyCleanupProcessingJob: JobName<PostgresProcessingJobCleanupParameters> {
+            .init("_Jobs_ValkeyProcessingCleanup_\(self.configuration.queueName)")
+        }
+
+        self.registerJob(
+            JobDefinition(name: legacyCleanupProcessingJob, retryStrategy: .dontRetry) { parameters, context in
+                try await self.cleanupProcessingJobs(maxJobsToProcess: parameters.maxJobsToProcess)
+            }
+        )
     }
 
     ///  Cleanup job queues
