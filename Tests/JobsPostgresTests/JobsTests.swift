@@ -1130,4 +1130,56 @@ struct JobsTests {
             await serviceGroup.triggerGracefulShutdown()
         }
     }
+
+    @Test func testLegacyValkeyCleanupJobName() async throws {
+        let jobQueue = try await self.createJobQueue(
+            configuration: .init(queueName: #function)
+        )
+
+        // Create job using the LEGACY valkey name
+        // The job handler is registered automatically by registerCleanupJobs() during queue init
+        // This is what we're testing - that this automatic registration works
+        let legacyCleanupJobName = JobName<PostgresProcessingJobCleanupParameters>(
+            "_Jobs_ValkeyProcessingCleanup_\(jobQueue.queue.configuration.queueName)"
+        )
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            let serviceGroup = ServiceGroup(
+                configuration: .init(
+                    services: [
+                        jobQueue.queue.client,
+                        jobQueue.processor(),
+                    ],
+                    gracefulShutdownSignals: [.sigterm, .sigint],
+                    logger: jobQueue.logger
+                )
+            )
+            group.addTask {
+                try await serviceGroup.run()
+            }
+
+            try await jobQueue.queue.migrations.apply(client: jobQueue.queue.client, logger: jobQueue.logger, dryRun: false)
+            try await jobQueue.queue.waitUntilReady()
+
+            // Push the legacy cleanup job - this will only complete if a handler is registered
+            _ = try await jobQueue.push(legacyCleanupJobName, parameters: .init(maxJobsToProcess: 10))
+
+            // Wait for job to be processed
+            try await Task.sleep(for: .milliseconds(200))
+
+            // Verify:
+            // - Job was picked up from pending queue
+            // - Job was processed successfully (did not fail due to missing handler)
+            //
+            // Note: We don't check completedJobs because by default completed jobs are
+            // auto-deleted (see RetentionPolicy in PostgresJobQueue.Configuration)
+            let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
+            let failedJobs = try await jobQueue.queue.getJobs(withStatus: .failed)
+
+            #expect(pendingJobs.count == 0)  // Job was picked up
+            #expect(failedJobs.count == 0)  // Job processed successfully (did not fail)
+
+            await serviceGroup.triggerGracefulShutdown()
+        }
+    }
 }
