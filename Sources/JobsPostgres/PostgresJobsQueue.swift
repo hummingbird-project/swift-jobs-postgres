@@ -320,6 +320,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                     )
                     RETURNING job_id
                 )
+                -- 2. Update job status and return id and job
                 UPDATE swift_jobs.jobs
                 SET status = \(Status.processing),
                     last_modified = NOW(),
