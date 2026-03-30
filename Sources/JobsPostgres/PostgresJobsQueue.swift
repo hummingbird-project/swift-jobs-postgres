@@ -321,12 +321,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                     RETURNING job_id
                 )
                 -- 2. Update job status and return id and job
-                UPDATE swift_jobs.jobs
+                UPDATE swift_jobs.jobs job
                 SET status = \(Status.processing),
                     last_modified = NOW(),
                     worker_id = \(self.context.workerID)
-                WHERE id = (SELECT job_id FROM next_job)
-                RETURNING id, job
+                WHERE job.id = (SELECT job_id FROM next_job)
+                RETURNING job.id, job.job
                 """,
                 logger: self.logger
             )
@@ -335,6 +335,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                 return nil
             }
             var columnIterator = row.makeIterator()
+            // get id and job columns
             guard let idColumn = columnIterator.next(), let jobColumn = columnIterator.next() else {
                 logger.info(
                     "Failed to get job from queue",
@@ -344,14 +345,17 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                 )
                 throw JobQueueError(code: .dequeueError, jobName: nil)
             }
+            // decode ID
             let jobID: UUID = try idColumn.decode(UUID.self, context: .default)
             let job: AnyDecodableJob?
 
+            // decode job
             do {
                 job = try jobColumn.decode(AnyDecodableJob?.self, context: .withJobRegistry(self.jobRegistry))
             } catch let error as JobQueueError {
                 return JobQueueResult(id: jobID, result: .failure(error))
             }
+            // ensure we have a job for that id
             guard let job else {
                 logger.info(
                     "Failed to find job with id",
