@@ -480,20 +480,6 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     }
 
     @usableFromInline
-    func setProcessing(jobID: JobID, connection: PostgresConnection) async throws {
-        try await connection.query(
-            """
-            UPDATE swift_jobs.jobs
-            SET status = \(Status.processing),
-                last_modified = \(Date.now),
-                worker_id = \(self.context.workerID)
-            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
-            """,
-            logger: self.logger
-        )
-    }
-
-    @usableFromInline
     func setStatus(jobID: JobID, status: Status) async throws {
         try await self.client.query(
             """
