@@ -320,6 +320,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 ),
+                delete_from_queue AS (
+                    DELETE FROM
+                        swift_jobs.queues
+                    WHERE job_id = (SELECT job_id FROM next_job)
+                    RETURNING job_id
+                ),
                 update_status AS (
                     UPDATE swift_jobs.jobs
                     SET status = \(Status.processing),
@@ -327,12 +333,6 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                         worker_id = \(self.context.workerID)
                     WHERE id = (SELECT job_id FROM next_job)
                     RETURNING id
-                ),
-                delete_from_queue AS (
-                    DELETE FROM
-                        swift_jobs.queues
-                    WHERE job_id = (SELECT job_id FROM next_job)
-                    RETURNING job_id
                 )
                 SELECT id, job
                 FROM swift_jobs.jobs
