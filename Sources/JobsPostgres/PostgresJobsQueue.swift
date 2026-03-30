@@ -42,9 +42,11 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// Job priority from lowest to highest
     public struct JobPriority: Equatable, Sendable {
+        @usableFromInline
         let rawValue: Priority
 
         // Job priority
+        @usableFromInline
         enum Priority: Int16, Sendable, PostgresCodable {
             case lowest = 0
             case lower = 1
@@ -250,10 +252,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     @inlinable
     public func push<Parameters>(_ jobRequest: JobRequest<Parameters>, options: JobOptions) async throws -> JobID {
         let jobID = JobID()
-        try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.add(jobID: jobID, jobRequest: jobRequest, queueName: configuration.queueName, connection: connection)
-            try await self.addToQueue(jobID: jobID, queueName: configuration.queueName, options: options, connection: connection)
-        }
+        try await self.addJob(jobID: jobID, jobRequest: jobRequest, queueName: configuration.queueName, options: options)
         return jobID
     }
 
@@ -264,15 +263,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     ///   - options: Job retry options
     @inlinable
     public func retry<Parameters>(_ jobID: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
-        try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.updateJob(jobID: jobID, jobRequest: jobRequest, connection: connection)
-            try await self.addToQueue(
-                jobID: jobID,
-                queueName: configuration.queueName,
-                options: .init(delayUntil: options.delayUntil),
-                connection: connection
-            )
-        }
+        try await self.retryJob(
+            jobID: jobID,
+            jobRequest: jobRequest,
+            queueName: configuration.queueName,
+            options: .init(delayUntil: options.delayUntil)
+        )
     }
 
     /// This is called to say job has finished processing and it can be deleted
@@ -385,25 +381,40 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         }
     }
 
-    @usableFromInline
-    func add<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, queueName: String, connection: PostgresConnection) async throws {
-        try await connection.query(
+    @inlinable
+    func addJob<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, queueName: String, options: JobOptions) async throws {
+        let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
+        try await self.client.query(
             """
+            WITH add_to_queue AS (
+                INSERT INTO swift_jobs.queues (job_id, created_at, delayed_until, queue_name, priority)
+                VALUES (\(jobID), NOW(), \(options.delayUntil), \(queueName), \(options.priority.rawValue))
+                -- We have found an existing job with the same id, SKIP this INSERT 
+                ON CONFLICT (job_id) DO NOTHING
+                RETURNING job_id
+            )
             INSERT INTO swift_jobs.jobs (id, job, status, queue_name)
-            VALUES (\(jobID), \(jobRequest), \(Status.pending), \(queueName))
+            VALUES (\(jobID), \(buffer), \(Status.pending), \(queueName))
             """,
             logger: self.logger
         )
     }
 
-    @usableFromInline
-    func updateJob<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, connection: PostgresConnection) async throws {
+    @inlinable
+    func retryJob<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, queueName: String, options: JobOptions) async throws {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
-        try await connection.query(
+        try await self.client.query(
             """
+            WITH add_to_queue AS (
+                INSERT INTO swift_jobs.queues (job_id, created_at, delayed_until, queue_name, priority)
+                VALUES (\(jobID), NOW(), \(options.delayUntil), \(queueName), \(options.priority.rawValue))
+                -- We have found an existing job with the same id, SKIP this INSERT 
+                ON CONFLICT (job_id) DO NOTHING
+                RETURNING job_id
+            )
             UPDATE swift_jobs.jobs
             SET job = \(buffer),
-                last_modified = \(Date.now),
+                last_modified = NOW(),
                 status = \(Status.failed)
             WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
             """,
@@ -531,6 +542,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         return jobs
     }
 
+    @usableFromInline
     let jobRegistry: JobRegistry
 }
 
