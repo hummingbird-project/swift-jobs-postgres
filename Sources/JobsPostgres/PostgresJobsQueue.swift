@@ -307,32 +307,25 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
             let stream = try await self.client.query(
                 """
                 WITH next_job AS (
-                    SELECT
-                        job_id
-                    FROM swift_jobs.queues
-                    WHERE delayed_until <= NOW()
-                    AND queue_name = \(configuration.queueName)
-                    ORDER BY priority DESC, delayed_until ASC, created_at ASC 
-                    FOR UPDATE SKIP LOCKED
-                    LIMIT 1
-                ),
-                delete_from_queue AS (
-                    DELETE FROM
-                        swift_jobs.queues
-                    WHERE job_id = (SELECT job_id FROM next_job)
+                    -- 1. Atomically pop the next job
+                    DELETE FROM swift_jobs.queues
+                    WHERE job_id = (
+                        SELECT job_id
+                        FROM swift_jobs.queues
+                        WHERE delayed_until <= NOW()
+                        AND queue_name = \(configuration.queueName)
+                        ORDER BY priority DESC, delayed_until ASC, created_at ASC 
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    )
                     RETURNING job_id
-                ),
-                update_status AS (
-                    UPDATE swift_jobs.jobs
-                    SET status = \(Status.processing),
-                        last_modified = NOW(),
-                        worker_id = \(self.context.workerID)
-                    WHERE id = (SELECT job_id FROM next_job)
-                    RETURNING id
                 )
-                SELECT id, job
-                FROM swift_jobs.jobs
+                UPDATE swift_jobs.jobs
+                SET status = \(Status.processing),
+                    last_modified = NOW(),
+                    worker_id = \(self.context.workerID)
                 WHERE id = (SELECT job_id FROM next_job)
+                RETURNING id, job
                 """,
                 logger: self.logger
             )
