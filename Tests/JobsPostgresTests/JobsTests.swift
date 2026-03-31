@@ -403,6 +403,7 @@ struct JobsTests {
     @Test func testErrorRetryCount() async throws {
         struct TestParameters: JobParameters {
             static let jobName = "testErrorRetryCount"
+            let test: Int
         }
         let expectation = TestExpectation()
         struct FailedError: Error {}
@@ -414,7 +415,7 @@ struct JobsTests {
                 expectation.trigger()
                 throw FailedError()
             }
-            try await jobQueue.push(TestParameters())
+            try await jobQueue.push(TestParameters(test: 34))
 
             try await expectation.wait(count: 3)
             try await Task.sleep(for: .milliseconds(200))
@@ -429,30 +430,34 @@ struct JobsTests {
     @Test func testErrorRetryAndThenSucceed() async throws {
         struct TestParameters: JobParameters {
             static let jobName = "testErrorRetryAndThenSucceed"
+            let value: Int
         }
-        let expectation = TestExpectation()
+        let (attemptStream, attemptCont) = AsyncStream.makeStream(of: Void.self)
+        let (resultStream, resultCont) = AsyncStream.makeStream(of: Int.self)
         let currentJobTryCount: Mutex<Int> = .init(0)
         struct FailedError: Error {}
         try await self.testJobQueue(numWorkers: 1) { jobQueue in
             jobQueue.registerJob(
                 parameters: TestParameters.self,
                 retryStrategy: .exponentialJitter(maxAttempts: 3, maxBackoff: .milliseconds(10))
-            ) { _, _ in
+            ) { parameters, _ in
                 defer {
                     currentJobTryCount.withLock {
                         $0 += 1
                     }
                 }
-                expectation.trigger()
+                attemptCont.yield()
                 if (currentJobTryCount.withLock { $0 }) == 0 {
                     throw FailedError()
                 }
+                resultCont.yield(parameters.value)
             }
-            try await jobQueue.push(TestParameters())
-
-            try await expectation.wait(count: 2)
-            try await Task.sleep(for: .milliseconds(200))
-
+            try await jobQueue.push(TestParameters(value: 731))
+            var attemptIterator = attemptStream.makeAsyncIterator()
+            await attemptIterator.next()
+            await attemptIterator.next()
+            let value = await resultStream.first { _ in true }
+            #expect(value == 731)
             let failedJobs = try await jobQueue.queue.getJobs(withStatus: .failed)
             #expect(failedJobs.count == 0)
             let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)

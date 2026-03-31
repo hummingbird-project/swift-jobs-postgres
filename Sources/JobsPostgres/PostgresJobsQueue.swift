@@ -42,9 +42,11 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// Job priority from lowest to highest
     public struct JobPriority: Equatable, Sendable {
+        @usableFromInline
         let rawValue: Priority
 
         // Job priority
+        @usableFromInline
         enum Priority: Int16, Sendable, PostgresCodable {
             case lowest = 0
             case lower = 1
@@ -250,10 +252,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     @inlinable
     public func push<Parameters>(_ jobRequest: JobRequest<Parameters>, options: JobOptions) async throws -> JobID {
         let jobID = JobID()
-        try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.add(jobID: jobID, jobRequest: jobRequest, queueName: configuration.queueName, connection: connection)
-            try await self.addToQueue(jobID: jobID, queueName: configuration.queueName, options: options, connection: connection)
-        }
+        try await self.addJob(jobID: jobID, jobRequest: jobRequest, queueName: configuration.queueName, options: options)
         return jobID
     }
 
@@ -264,15 +263,12 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     ///   - options: Job retry options
     @inlinable
     public func retry<Parameters>(_ jobID: JobID, jobRequest: JobRequest<Parameters>, options: JobRetryOptions) async throws {
-        try await self.client.withTransaction(logger: self.logger) { connection in
-            try await self.updateJob(jobID: jobID, jobRequest: jobRequest, connection: connection)
-            try await self.addToQueue(
-                jobID: jobID,
-                queueName: configuration.queueName,
-                options: .init(delayUntil: options.delayUntil),
-                connection: connection
-            )
-        }
+        try await self.retryJob(
+            jobID: jobID,
+            jobRequest: jobRequest,
+            queueName: configuration.queueName,
+            options: .init(delayUntil: options.delayUntil)
+        )
     }
 
     /// This is called to say job has finished processing and it can be deleted
@@ -305,79 +301,72 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     @usableFromInline
     func popFirst() async throws -> JobQueueResult<JobID>? {
-        enum PopFirstResult {
-            case nothing
-            case result(Result<PostgresRow, Error>, jobID: JobID)
-        }
         do {
-            // The withTransaction closure returns a Result<(ByteBuffer, JobID)?, Error> because
-            // we want to be able to exit the closure without cancelling the transaction
-            let popFirstResult = try await self.client.withTransaction(logger: self.logger) {
-                connection -> PopFirstResult in
-                try Task.checkCancellation()
+            try Task.checkCancellation()
 
-                let stream = try await connection.query(
-                    """
-                    WITH next_job AS (
-                        SELECT
-                            job_id
+            let stream = try await self.client.query(
+                """
+                WITH next_job AS (
+                    -- 1. Atomically pop the next job
+                    DELETE FROM swift_jobs.queues
+                    WHERE job_id = (
+                        SELECT job_id
                         FROM swift_jobs.queues
                         WHERE delayed_until <= NOW()
                         AND queue_name = \(configuration.queueName)
-                        ORDER BY priority DESC, delayed_until ASC, created_at ASC 
+                        ORDER BY priority DESC, delayed_until ASC 
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
                     )
-                    DELETE FROM
-                        swift_jobs.queues
-                    WHERE job_id = (SELECT job_id FROM next_job)
                     RETURNING job_id
-                    """,
-                    logger: self.logger
                 )
-                // return nil if nothing in queue
-                guard let jobID = try await stream.decode(UUID.self, context: .default).first(where: { _ in true }) else {
-                    return .nothing
-                }
-                // set job status to processing
-                try await self.setProcessing(jobID: jobID, connection: connection)
-
-                // select job from job table
-                let stream2 = try await connection.query(
-                    """
-                    SELECT
-                        job
-                    FROM swift_jobs.jobs
-                    WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
-                    """,
-                    logger: self.logger
-                )
-                guard let row = try await stream2.first(where: { _ in true }) else {
-                    logger.info(
-                        "Failed to find job with id",
-                        metadata: [
-                            "JobID": "\(jobID)",
-                            "Queue": "\(configuration.queueName)",
-                        ]
-                    )
-                    // if failed to find the job in the job table return error
-                    return .result(.failure(JobQueueError(code: .unrecognisedJobId, jobName: nil)), jobID: jobID)
-                }
-                return .result(.success(row), jobID: jobID)
-            }
-
-            switch popFirstResult {
-            case .nothing:
+                -- 2. Update job status and return id and job
+                UPDATE swift_jobs.jobs job
+                SET status = \(Status.processing),
+                    last_modified = NOW(),
+                    worker_id = \(self.context.workerID)
+                WHERE job.id = (SELECT job_id FROM next_job)
+                RETURNING job.id, job.job
+                """,
+                logger: self.logger
+            )
+            // return nil if nothing in queue
+            guard let row = try await stream.first(where: { _ in true }) else {
                 return nil
-            case .result(let result, let jobID):
-                do {
-                    let row = try result.get()
-                    let jobInstance = try row.decode(AnyDecodableJob.self, context: .withJobRegistry(self.jobRegistry)).job
-                    return JobQueueResult(id: jobID, result: .success(jobInstance))
-                } catch let error as JobQueueError {
-                    return JobQueueResult(id: jobID, result: .failure(error))
-                }
             }
+            var columnIterator = row.makeIterator()
+            // get id and job columns
+            guard let idColumn = columnIterator.next(), let jobColumn = columnIterator.next() else {
+                logger.info(
+                    "Failed to get job from queue",
+                    metadata: [
+                        "Queue": "\(configuration.queueName)"
+                    ]
+                )
+                throw JobQueueError(code: .dequeueError, jobName: nil)
+            }
+            // decode ID
+            let jobID: UUID = try idColumn.decode(UUID.self, context: .default)
+            let job: AnyDecodableJob?
+
+            // decode job
+            do {
+                job = try jobColumn.decode(AnyDecodableJob?.self, context: .withJobRegistry(self.jobRegistry))
+            } catch let error as JobQueueError {
+                return JobQueueResult(id: jobID, result: .failure(error))
+            }
+            // ensure we have a job for that id
+            guard let job else {
+                logger.info(
+                    "Failed to find job with id",
+                    metadata: [
+                        "JobID": "\(jobID)",
+                        "Queue": "\(configuration.queueName)",
+                    ]
+                )
+                throw JobQueueError(code: .unrecognisedJobId, jobName: nil)
+            }
+            return JobQueueResult(id: jobID, result: .success(job.job))
         } catch let error as PSQLError {
             logger.info(
                 "Failed to get job from queue",
@@ -387,37 +376,43 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                 ]
             )
             throw error
-        } catch let error as JobQueueError {
-            logger.info(
-                "Job failed",
-                metadata: [
-                    "Error": "\(String(reflecting: error))",
-                    "Queue": "\(configuration.queueName)",
-                ]
-            )
-            throw error
         }
     }
 
-    @usableFromInline
-    func add<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, queueName: String, connection: PostgresConnection) async throws {
-        try await connection.query(
+    @inlinable
+    func addJob<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, queueName: String, options: JobOptions) async throws {
+        let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
+        try await self.client.query(
             """
+            WITH add_to_queue AS (
+                INSERT INTO swift_jobs.queues (job_id, created_at, delayed_until, queue_name, priority)
+                VALUES (\(jobID), NOW(), \(options.delayUntil), \(queueName), \(options.priority.rawValue))
+                -- We have found an existing job with the same id, SKIP this INSERT 
+                ON CONFLICT (job_id) DO NOTHING
+                RETURNING job_id
+            )
             INSERT INTO swift_jobs.jobs (id, job, status, queue_name)
-            VALUES (\(jobID), \(jobRequest), \(Status.pending), \(queueName))
+            VALUES (\(jobID), \(buffer), \(Status.pending), \(queueName))
             """,
             logger: self.logger
         )
     }
 
-    @usableFromInline
-    func updateJob<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, connection: PostgresConnection) async throws {
+    @inlinable
+    func retryJob<Parameters>(jobID: JobID, jobRequest: JobRequest<Parameters>, queueName: String, options: JobOptions) async throws {
         let buffer = try self.jobRegistry.encode(jobRequest: jobRequest)
-        try await connection.query(
+        try await self.client.query(
             """
+            WITH add_to_queue AS (
+                INSERT INTO swift_jobs.queues (job_id, created_at, delayed_until, queue_name, priority)
+                VALUES (\(jobID), NOW(), \(options.delayUntil), \(queueName), \(options.priority.rawValue))
+                -- We have found an existing job with the same id, SKIP this INSERT 
+                ON CONFLICT (job_id) DO NOTHING
+                RETURNING job_id
+            )
             UPDATE swift_jobs.jobs
             SET job = \(buffer),
-                last_modified = \(Date.now),
+                last_modified = NOW(),
                 status = \(Status.failed)
             WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
             """,
@@ -485,20 +480,6 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     }
 
     @usableFromInline
-    func setProcessing(jobID: JobID, connection: PostgresConnection) async throws {
-        try await connection.query(
-            """
-            UPDATE swift_jobs.jobs
-            SET status = \(Status.processing),
-                last_modified = \(Date.now),
-                worker_id = \(self.context.workerID)
-            WHERE id = \(jobID) AND queue_name = \(configuration.queueName)
-            """,
-            logger: self.logger
-        )
-    }
-
-    @usableFromInline
     func setStatus(jobID: JobID, status: Status) async throws {
         try await self.client.query(
             """
@@ -545,6 +526,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         return jobs
     }
 
+    @usableFromInline
     let jobRegistry: JobRegistry
 }
 
