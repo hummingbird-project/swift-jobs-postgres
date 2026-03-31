@@ -314,7 +314,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                         FROM swift_jobs.queues
                         WHERE delayed_until <= NOW()
                         AND queue_name = \(configuration.queueName)
-                        ORDER BY priority DESC, delayed_until ASC, created_at ASC 
+                        ORDER BY priority DESC, delayed_until ASC 
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
                     )
