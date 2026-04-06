@@ -2,6 +2,28 @@
 
 import PackageDescription
 
+var defaultSwiftSettings: [SwiftSetting] =
+    [
+        .swiftLanguageMode(.v6),
+        .enableExperimentalFeature("AvailabilityMacro=valkeySwift 1.0:macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0"),
+
+        // https://github.com/apple/swift-evolution/blob/main/proposals/0335-existential-any.md
+        .enableUpcomingFeature("ExistentialAny"),
+
+        // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0444-member-import-visibility.md
+        .enableUpcomingFeature("MemberImportVisibility"),
+
+        // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0409-access-level-on-imports.md
+        .enableUpcomingFeature("InternalImportsByDefault"),
+    ]
+
+#if compiler(>=6.2)
+defaultSwiftSettings.append(contentsOf: [
+    // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault")
+])
+#endif
+
 let package = Package(
     name: "swift-jobs-postgres",
     platforms: [.macOS(.v15), .iOS(.v18), .tvOS(.v18)],
@@ -21,13 +43,15 @@ let package = Package(
                 .product(name: "PostgresMigrations", package: "postgres-migrations"),
                 .product(name: "Jobs", package: "swift-jobs"),
                 .product(name: "PostgresNIO", package: "postgres-nio"),
-            ]
+            ],
+            swiftSettings: defaultSwiftSettings
         ),
         .testTarget(
             name: "JobsPostgresTests",
             dependencies: [
                 "JobsPostgres"
-            ]
+            ],
+            swiftSettings: defaultSwiftSettings
         ),
     ]
 )

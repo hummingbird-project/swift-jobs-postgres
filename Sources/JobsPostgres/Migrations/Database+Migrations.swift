@@ -6,7 +6,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-import PostgresMigrations
+public import PostgresMigrations
 
 extension DatabaseMigrationGroup {
     /// JobQueue migration group

@@ -12,8 +12,6 @@ import PostgresMigrations
 import PostgresNIO
 import Testing
 
-/// TestScoping traits are only available in swift 6.1
-#if compiler(>=6.1)
 final class PostgresMigrations: SuiteTrait, TestScoping {
     let postgresConfiguration: PostgresClient.Configuration
 
@@ -21,7 +19,7 @@ final class PostgresMigrations: SuiteTrait, TestScoping {
         self.postgresConfiguration = postgresConfiguration
     }
 
-    func provideScope(for test: Test, testCase: Test.Case?, performing function: () async throws -> Void) async throws {
+    func provideScope(for test: Test, testCase: Test.Case?, performing function: @Sendable @concurrent () async throws -> Void) async throws {
         var logger = Logger(label: "PostgresMigrations")
         logger.logLevel = .debug
         let postgresClient = PostgresClient(
@@ -44,12 +42,3 @@ final class PostgresMigrations: SuiteTrait, TestScoping {
 extension SuiteTrait where Self == PostgresMigrations {
     static func postgresMigrations(configuration: PostgresClient.Configuration) -> Self { .init(postgresConfiguration: configuration) }
 }
-
-#else
-
-// Run jobs serially if TestScoping traits aren't available
-extension SuiteTrait where Self == ParallelizationTrait {
-    static func postgresMigrations(configuration: PostgresClient.Configuration) -> Self { .serialized }
-}
-
-#endif

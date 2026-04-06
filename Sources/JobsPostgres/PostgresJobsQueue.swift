@@ -6,13 +6,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
-import Jobs
+public import Jobs
 import Logging
 import NIOCore
-import PostgresMigrations
-import PostgresNIO
-import Synchronization
+public import PostgresMigrations
+public import PostgresNIO
+public import Synchronization
+
+#if canImport(FoundationEssentials)
+public import FoundationEssentials
+#else
+public import Foundation
+#endif
 
 /// Postgres Job queue implementation
 ///
@@ -283,7 +288,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// This is called to say job has failed to run and should be put aside
     @inlinable
-    public func failed(jobID: JobID, error: Error) async throws {
+    public func failed(jobID: JobID, error: any Error) async throws {
         if configuration.retentionPolicy.failedJobs == .doNotRetain {
             try await self.delete(jobID: jobID)
         } else {

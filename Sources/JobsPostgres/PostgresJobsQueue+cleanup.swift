@@ -8,8 +8,8 @@
 
 import ExtrasBase64
 import Foundation
-import Jobs
-import Logging
+public import Jobs
+public import Logging
 import NIOCore
 import PostgresMigrations
 import PostgresNIO
