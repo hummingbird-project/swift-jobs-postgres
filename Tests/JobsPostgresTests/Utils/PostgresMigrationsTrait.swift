@@ -13,13 +13,18 @@ import PostgresNIO
 import Testing
 
 final class PostgresMigrations: SuiteTrait, TestScoping {
+    #if compiler(>=6.2)
+    typealias ScopeFunction = @Sendable @concurrent () async throws -> Void
+    #else
+    typealias ScopeFunction = @Sendable () async throws -> Void
+    #endif
     let postgresConfiguration: PostgresClient.Configuration
 
     init(postgresConfiguration: PostgresClient.Configuration) {
         self.postgresConfiguration = postgresConfiguration
     }
 
-    func provideScope(for test: Test, testCase: Test.Case?, performing function: @Sendable @concurrent () async throws -> Void) async throws {
+    func provideScope(for test: Test, testCase: Test.Case?, performing function: ScopeFunction) async throws {
         var logger = Logger(label: "PostgresMigrations")
         logger.logLevel = .debug
         let postgresClient = PostgresClient(
