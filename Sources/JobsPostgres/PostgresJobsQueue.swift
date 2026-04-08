@@ -656,6 +656,16 @@ extension JobQueueDriver where Self == PostgresJobQueue {
     }
 }
 
+#if canImport(FoundationEssentials)
+extension PostgresDecodingContext where JSONDecoder == FoundationEssentials.JSONDecoder {
+    /// A ``PostgresDecodingContext`` that uses a Foundation `JSONDecoder` with job registry attached as userInfo.
+    public static func withJobRegistry(_ jobRegistry: JobRegistry) -> PostgresDecodingContext {
+        let jsonDecoder = JSONDecoder()
+        jsonDecoder.userInfo[._jobConfiguration] = jobRegistry
+        return PostgresDecodingContext(jsonDecoder: jsonDecoder)
+    }
+}
+#else
 extension PostgresDecodingContext where JSONDecoder == Foundation.JSONDecoder {
     /// A ``PostgresDecodingContext`` that uses a Foundation `JSONDecoder` with job registry attached as userInfo.
     public static func withJobRegistry(_ jobRegistry: JobRegistry) -> PostgresDecodingContext {
@@ -664,3 +674,4 @@ extension PostgresDecodingContext where JSONDecoder == Foundation.JSONDecoder {
         return PostgresDecodingContext(jsonDecoder: jsonDecoder)
     }
 }
+#endif
