@@ -6,8 +6,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-import Jobs
-import PostgresNIO
+public import Jobs
+public import PostgresNIO
 
 extension AnyDecodableJob {
     public static var psqlType: PostgresDataType {

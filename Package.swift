@@ -1,6 +1,16 @@
 // swift-tools-version: 6.1
-
 import PackageDescription
+
+var defaultSwiftSettings: [SwiftSetting] = [
+    // https://github.com/apple/swift-evolution/blob/main/proposals/0335-existential-any.md
+    .enableUpcomingFeature("ExistentialAny"),
+
+    // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0444-member-import-visibility.md
+    .enableUpcomingFeature("MemberImportVisibility"),
+
+    // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0409-access-level-on-imports.md
+    .enableUpcomingFeature("InternalImportsByDefault"),
+]
 
 let package = Package(
     name: "swift-jobs-postgres",
@@ -21,13 +31,15 @@ let package = Package(
                 .product(name: "PostgresMigrations", package: "postgres-migrations"),
                 .product(name: "Jobs", package: "swift-jobs"),
                 .product(name: "PostgresNIO", package: "postgres-nio"),
-            ]
+            ],
+            swiftSettings: defaultSwiftSettings
         ),
         .testTarget(
             name: "JobsPostgresTests",
             dependencies: [
                 "JobsPostgres"
-            ]
+            ],
+            swiftSettings: defaultSwiftSettings
         ),
     ]
 )

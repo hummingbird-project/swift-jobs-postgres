@@ -14,6 +14,7 @@ import PostgresNIO
 import ServiceLifecycle
 import Synchronization
 import Testing
+import UnixSignals
 
 @testable import JobsPostgres
 
