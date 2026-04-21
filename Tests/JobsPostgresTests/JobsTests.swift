@@ -69,23 +69,6 @@ struct JobsTests {
         )
     }
 
-    func createJobService(
-        serviceOptions: JobService<PostgresJobQueue>.Options = .init(
-            queue: .init(defaultRetryStrategy: .exponentialJitter(maxBackoff: .milliseconds(10)))
-        ),
-        configuration: PostgresJobQueue.Configuration = .init(),
-        function: String = #function
-    ) async throws -> (JobService<PostgresJobQueue>, PostgresJobQueue) {
-        let postgresDriver = await createPostgresJobDriver(configuration: configuration, function: function)
-        return (
-            JobService(
-                postgresDriver,
-                logger: postgresDriver.logger,
-                options: serviceOptions
-            ), postgresDriver
-        )
-    }
-
     /// Helper function for test a server
     ///
     /// Creates test client, runs test function abd ensures everything is
@@ -1222,7 +1205,11 @@ struct JobsTests {
         }
         var logger = Logger(label: "runJob")
         logger.logLevel = .trace
-        let (jobService, postgresDriver) = try await self.createJobService()
+        let postgresDriver = await createPostgresJobDriver(configuration: .init())
+        let jobService = JobService(
+            postgresDriver,
+            logger: postgresDriver.logger
+        )
         return try await withThrowingTaskGroup(of: Void.self) { group in
             let serviceGroup = ServiceGroup(
                 configuration: .init(
@@ -1257,8 +1244,8 @@ struct JobsTests {
             }
         }
         let dateComponents = Calendar.current.dateComponents([.hour, .minute, .second], from: Date.now + 1)
-        let postgresDriver = await createPostgresJobDriver(configuration: .init())
         let (stream, cont) = AsyncStream.makeStream(of: String.self)
+        let postgresDriver = await createPostgresJobDriver(configuration: .init())
         let jobService = JobService(
             postgresDriver,
             logger: postgresDriver.logger,

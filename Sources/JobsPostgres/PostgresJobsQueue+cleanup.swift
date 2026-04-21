@@ -174,6 +174,10 @@ extension PostgresJobQueue: JobServiceDriver {
         }
     }
 
+    /// Schedule queue cleanup
+    /// - Parameters:
+    ///   - schedule: Job schedule to add cleanup scheduled jobs
+    ///   - options: options
     public func scheduleQueueCleanup(_ schedule: inout JobSchedule, options: CleanupOptions) {
         schedule.addJob(self.cleanupProcessingJob, parameters: options.orphaned.parameters, schedule: options.orphaned.schedule)
         if let jobCleanup = options.jobs {
