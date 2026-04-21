@@ -41,7 +41,7 @@ public struct PostgresJobCleanupParameters: Sendable & Codable {
 }
 
 /// Parameters for cleanup of jobs stuck in processing
-public struct PostgresProcessingJobCleanupParameters: Sendable, Codable {
+public struct PostgresOrphanedJobCleanupParameters: Sendable, Codable {
     let maxJobsToProcess: Int
 
     ///  Initialize PostgresProcessingJobCleanupParameters
@@ -51,8 +51,10 @@ public struct PostgresProcessingJobCleanupParameters: Sendable, Codable {
         self.maxJobsToProcess = maxJobsToProcess
     }
 }
+@available(*, deprecated, renamed: "PostgresOrphanedJobCleanupParameters")
+public typealias PostgresProcessingJobCleanupParameters = PostgresOrphanedJobCleanupParameters
 
-extension PostgresJobQueue {
+extension PostgresJobQueue: JobServiceDriver {
     /// what to do with failed/processing jobs from last time queue was handled
     public struct JobCleanup: Sendable, Codable {
         enum RawValue: Codable {
@@ -83,7 +85,7 @@ extension PostgresJobQueue {
     /// clean of hung processing jobs job name.
     ///
     /// Use this with the ``/Jobs/JobSchedule`` to schedule a cleanup hung processing jobs
-    public var cleanupProcessingJob: JobName<PostgresProcessingJobCleanupParameters> {
+    public var cleanupProcessingJob: JobName<PostgresOrphanedJobCleanupParameters> {
         .init("_Jobs_PostgresProcessingCleanup_\(self.configuration.queueName)")
     }
 
@@ -113,7 +115,7 @@ extension PostgresJobQueue {
         // This ensures that Jobs scheduled with the legacy
         // `_Jobs_ValkeyProcessingCleanup_` name will still be processed.
 
-        var legacyCleanupProcessingJob: JobName<PostgresProcessingJobCleanupParameters> {
+        var legacyCleanupProcessingJob: JobName<PostgresOrphanedJobCleanupParameters> {
             .init("_Jobs_ValkeyProcessingCleanup_\(self.configuration.queueName)")
         }
 
@@ -122,6 +124,61 @@ extension PostgresJobQueue {
                 try await self.cleanupProcessingJobs(maxJobsToProcess: parameters.maxJobsToProcess)
             }
         )
+    }
+
+    /// Queue cleanup schedule options
+    public struct CleanupOptions: JobQueueCleanupOptionsProtocol {
+        /// Cleanup options for jobs in various types of state (completed, failed, cancelled, paused)
+        var jobs: JobCleanup?
+        /// Orphaned job cleanup options
+        ///
+        /// An orphaned job is a job who that finished because the server it was running on crashed
+        var orphaned: OrphanedJobsCleanup
+
+        public init(
+            jobs: JobCleanup? = .init(),
+            orphaned: OrphanedJobsCleanup = .init()
+        ) {
+            self.jobs = jobs
+            self.orphaned = orphaned
+        }
+
+        public static var `default`: Self { .init() }
+
+        /// Cleanup options for jobs in various types of state (completed, failed, cancelled, paused)
+        public struct JobCleanup: Sendable {
+            var parameters: PostgresJobCleanupParameters
+            var schedule: Schedule
+
+            public init(
+                parameters: PostgresJobCleanupParameters = .init(),
+                schedule: Schedule = .daily()
+            ) {
+                self.parameters = parameters
+                self.schedule = schedule
+            }
+        }
+
+        /// Orphaned job cleanup options
+        public struct OrphanedJobsCleanup: Sendable {
+            var parameters: PostgresOrphanedJobCleanupParameters
+            var schedule: Schedule
+
+            public init(
+                parameters: PostgresOrphanedJobCleanupParameters = .init(maxJobsToProcess: .max),
+                schedule: Schedule = .onMinutes([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55])
+            ) {
+                self.parameters = parameters
+                self.schedule = schedule
+            }
+        }
+    }
+
+    public func scheduleQueueCleanup(_ schedule: inout JobSchedule, options: CleanupOptions) {
+        schedule.addJob(self.cleanupProcessingJob, parameters: options.orphaned.parameters, schedule: options.orphaned.schedule)
+        if let jobCleanup = options.jobs {
+            schedule.addJob(self.cleanupJob, parameters: jobCleanup.parameters, schedule: jobCleanup.schedule)
+        }
     }
 
     ///  Cleanup job queues
