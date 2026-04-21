@@ -1247,6 +1247,7 @@ struct JobsTests {
         }
     }
 
+    /// Check scheduled cleanup jobs run
     @Test
     func testJobServiceCleanup() async throws {
         struct CatchJobMiddleware: JobMiddleware {
@@ -1255,7 +1256,6 @@ struct JobsTests {
                 cont.yield(name)
             }
         }
-        // create schedule that ensures a job will be run in the next second
         let dateComponents = Calendar.current.dateComponents([.hour, .minute, .second], from: Date.now + 1)
         let postgresDriver = await createPostgresJobDriver(configuration: .init())
         let (stream, cont) = AsyncStream.makeStream(of: String.self)
