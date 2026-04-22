@@ -31,10 +31,10 @@ func getPostgresConfiguration() -> PostgresClient.Configuration {
 
 @Suite("Postgres Jobs Queue", .postgresMigrations(configuration: getPostgresConfiguration()))
 struct JobsTests {
-    func createJobQueue(
+    func createPostgresJobDriver(
         configuration: PostgresJobQueue.Configuration = .init(),
         function: String = #function
-    ) async throws -> JobQueue<PostgresJobQueue> {
+    ) async -> PostgresJobQueue {
         let logger = {
             var logger = Logger(label: function)
             logger.logLevel = .debug
@@ -49,14 +49,22 @@ struct JobsTests {
             backgroundLogger: logger
         )
         let postgresMigrations = DatabaseMigrations()
-        return await JobQueue(
-            .postgres(
-                client: postgresClient,
-                migrations: postgresMigrations,
-                configuration: configuration,
-                logger: logger
-            ),
-            logger: logger,
+        return await .postgres(
+            client: postgresClient,
+            migrations: postgresMigrations,
+            configuration: configuration,
+            logger: logger
+        )
+    }
+
+    func createJobQueue(
+        configuration: PostgresJobQueue.Configuration = .init(),
+        function: String = #function
+    ) async throws -> JobQueue<PostgresJobQueue> {
+        let postgresDriver = await createPostgresJobDriver(configuration: configuration, function: function)
+        return JobQueue(
+            postgresDriver,
+            logger: postgresDriver.logger,
             options: .init(defaultRetryStrategy: .exponentialJitter(maxBackoff: .milliseconds(10)))
         )
     }
@@ -1145,7 +1153,7 @@ struct JobsTests {
         // Create job using the LEGACY valkey name
         // The job handler is registered automatically by registerCleanupJobs() during queue init
         // This is what we're testing - that this automatic registration works
-        let legacyCleanupJobName = JobName<PostgresProcessingJobCleanupParameters>(
+        let legacyCleanupJobName = JobName<PostgresOrphanedJobCleanupParameters>(
             "_Jobs_ValkeyProcessingCleanup_\(jobQueue.queue.configuration.queueName)"
         )
 
@@ -1185,6 +1193,92 @@ struct JobsTests {
             #expect(pendingJobs.count == 0)  // Job was picked up
             #expect(failedJobs.count == 0)  // Job processed successfully (did not fail)
 
+            await serviceGroup.triggerGracefulShutdown()
+        }
+    }
+
+    @Test
+    func testJobService() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "runJob"
+            let value: Int
+        }
+        var logger = Logger(label: "runJob")
+        logger.logLevel = .trace
+        let postgresDriver = await createPostgresJobDriver(configuration: .init())
+        let jobService = JobService(
+            postgresDriver,
+            logger: postgresDriver.logger
+        )
+        return try await withThrowingTaskGroup(of: Void.self) { group in
+            let serviceGroup = ServiceGroup(
+                configuration: .init(
+                    services: [postgresDriver.client, jobService],
+                    gracefulShutdownSignals: [.sigterm, .sigint],
+                    logger: logger
+                )
+            )
+            group.addTask {
+                try await serviceGroup.run()
+            }
+            try await postgresDriver.migrations.apply(client: postgresDriver.client, groups: [.jobQueue], logger: logger, dryRun: false)
+            let (stream, cont) = AsyncStream.makeStream(of: Int.self)
+            jobService.registerJob(parameters: TestParameters.self) { parameter, _ in
+                cont.yield(parameter.value)
+            }
+            try await jobService.push(TestParameters(value: 4))
+            let value = await stream.first { _ in true }
+            #expect(value == 4)
+
+            await serviceGroup.triggerGracefulShutdown()
+        }
+    }
+
+    /// Check scheduled cleanup jobs run
+    @Test
+    func testJobServiceCleanup() async throws {
+        struct CatchJobMiddleware: JobMiddleware {
+            let cont: AsyncStream<String>.Continuation
+            func onPushJob<Parameters>(name: String, parameters: Parameters, context: JobPushQueueContext) async {
+                cont.yield(name)
+            }
+        }
+        let dateComponents = Calendar.current.dateComponents([.hour, .minute, .second], from: Date.now + 1)
+        let (stream, cont) = AsyncStream.makeStream(of: String.self)
+        let postgresDriver = await createPostgresJobDriver(configuration: .init())
+        let jobService = JobService(
+            postgresDriver,
+            logger: postgresDriver.logger,
+            options: .init(
+                cleanup: .init(
+                    jobs: .init(schedule: .everyMinute(second: dateComponents.second!)),
+                    orphaned: .init(schedule: .everyMinute(second: dateComponents.second!))
+                )
+            )
+        ) {
+            CatchJobMiddleware(cont: cont)
+        }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            let serviceGroup = ServiceGroup(
+                configuration: .init(
+                    services: [postgresDriver.client, jobService],
+                    gracefulShutdownSignals: [.sigterm, .sigint],
+                    logger: jobService.logger
+                )
+            )
+            group.addTask {
+                try await serviceGroup.run()
+            }
+            try await postgresDriver.migrations.apply(client: postgresDriver.client, groups: [.jobQueue], logger: jobService.logger, dryRun: false)
+            var iterator = stream.makeAsyncIterator()
+            let value = await iterator.next()
+            let value2 = await iterator.next()
+            guard let value, let value2 else {
+                Issue.record()
+                return
+            }
+            let values: Set<String> = [value, value2]
+            #expect(values == Set([postgresDriver.cleanupJob.name, postgresDriver.cleanupProcessingJob.name]))
             await serviceGroup.triggerGracefulShutdown()
         }
     }
