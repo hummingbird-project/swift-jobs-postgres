@@ -1271,8 +1271,12 @@ struct JobsTests {
             }
             try await postgresDriver.migrations.apply(client: postgresDriver.client, groups: [.jobQueue], logger: jobService.logger, dryRun: false)
             var iterator = stream.makeAsyncIterator()
-            let value = try await #require(iterator.next())
-            let value2 = try await #require(iterator.next())
+            let value = await iterator.next()
+            let value2 = await iterator.next()
+            guard let value, let value2 else {
+                Issue.record()
+                return
+            }
             let values: Set<String> = [value, value2]
             #expect(values == Set([postgresDriver.cleanupJob.name, postgresDriver.cleanupProcessingJob.name]))
             await serviceGroup.triggerGracefulShutdown()
