@@ -132,7 +132,7 @@ extension PostgresJobQueue: JobServiceDriver {
         var jobs: JobCleanup?
         /// Orphaned job cleanup options
         ///
-        /// An orphaned job is a job who that finished because the server it was running on crashed
+        /// An orphaned job is a job that has not finished because the server it was running on crashed.
         var orphaned: OrphanedJobsCleanup
 
         public init(
