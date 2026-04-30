@@ -136,7 +136,7 @@ extension PostgresJobQueue: JobServiceDriver {
         var orphaned: OrphanedJobsCleanup
 
         public init(
-            jobs: JobCleanup? = .init(),
+            jobs: JobCleanup? = nil,
             orphaned: OrphanedJobsCleanup = .init()
         ) {
             self.jobs = jobs
