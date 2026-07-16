@@ -3,13 +3,16 @@ name: Swift nightly build
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   linux:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       matrix:
-        image: ['nightly-focal', 'nightly-jammy', 'nightly-amazonlinux2']
+        image: ['nightly-jammy', 'nightly-noble', 'nightly-amazonlinux2023']
         postgres-image:
             - "postgres:17"
             - "postgres:14"
@@ -42,7 +45,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v7
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
     - name: Test
       run: |
         swift test
