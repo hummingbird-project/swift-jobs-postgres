@@ -60,6 +60,6 @@ struct CreateSwiftJobsMigrations: DatabaseMigration {
         )
     }
 
-    var description: String { "__CreateSwiftJobsMigrations__" }
+    var name: String { "CreateSwiftJobsMigrations" }
     var group: DatabaseMigrationGroup { .jobQueue }
 }
