@@ -115,7 +115,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
 
     /// Job Status
     @usableFromInline
-    enum Status: Int16, PostgresCodable {
+    enum Status: Int16, PostgresCodable, Sendable {
         case pending = 0
         case processing = 1
         case failed = 2

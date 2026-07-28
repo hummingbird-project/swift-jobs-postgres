@@ -18,57 +18,8 @@ import UnixSignals
 
 @testable import JobsPostgres
 
-func getPostgresConfiguration() -> PostgresClient.Configuration {
-    .init(
-        host: ProcessInfo.processInfo.environment["POSTGRES_HOSTNAME"] ?? "localhost",
-        port: 5432,
-        username: ProcessInfo.processInfo.environment["POSTGRES_USER"] ?? "test_user",
-        password: ProcessInfo.processInfo.environment["POSTGRES_PASSWORD"] ?? "test_password",
-        database: ProcessInfo.processInfo.environment["POSTGRES_DB"] ?? "test_db",
-        tls: .disable
-    )
-}
-
 @Suite("Postgres Jobs Queue", .postgresMigrations(configuration: getPostgresConfiguration()))
 struct JobsTests {
-    func createPostgresJobDriver(
-        configuration: PostgresJobQueue.Configuration = .init(),
-        function: String = #function
-    ) async -> PostgresJobQueue {
-        let logger = {
-            var logger = Logger(label: function)
-            logger.logLevel = .debug
-            return logger
-        }()
-        var configuration = configuration
-        if configuration.queueName == "default" {
-            configuration.queueName = function
-        }
-        let postgresClient = PostgresClient(
-            configuration: getPostgresConfiguration(),
-            backgroundLogger: logger
-        )
-        let postgresMigrations = DatabaseMigrations()
-        return await .postgres(
-            client: postgresClient,
-            migrations: postgresMigrations,
-            configuration: configuration,
-            logger: logger
-        )
-    }
-
-    func createJobQueue(
-        configuration: PostgresJobQueue.Configuration = .init(),
-        function: String = #function
-    ) async throws -> JobQueue<PostgresJobQueue> {
-        let postgresDriver = await createPostgresJobDriver(configuration: configuration, function: function)
-        return JobQueue(
-            postgresDriver,
-            logger: postgresDriver.logger,
-            options: .init(defaultRetryStrategy: .exponentialJitter(maxBackoff: .milliseconds(10)))
-        )
-    }
-
     /// Helper function for test a server
     ///
     /// Creates test client, runs test function abd ensures everything is
@@ -182,7 +133,7 @@ struct JobsTests {
         function: String = #function,
         test: (JobQueue<PostgresJobQueue>) async throws -> T
     ) async throws -> T {
-        let jobQueue = try await self.createJobQueue(
+        let jobQueue = try await createJobQueue(
             configuration: configuration,
             function: function
         )
@@ -307,7 +258,7 @@ struct JobsTests {
         }
         let jobExecutionSequence: Mutex<[Int]> = .init([])
 
-        let jobQueue = try await self.createJobQueue(configuration: .init(queueName: "testJobPriorities"), function: #function)
+        let jobQueue = try await createJobQueue(configuration: .init(queueName: "testJobPriorities"), function: #function)
 
         let expectation = TestExpectation()
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
@@ -362,7 +313,7 @@ struct JobsTests {
         let expectation = TestExpectation()
         let jobExecutionSequence: Mutex<[Int]> = .init([])
 
-        let jobQueue = try await self.createJobQueue(configuration: .init(queueName: "testJobPrioritiesWithDelay"), function: #function)
+        let jobQueue = try await createJobQueue(configuration: .init(queueName: "testJobPrioritiesWithDelay"), function: #function)
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, context in
@@ -684,7 +635,7 @@ struct JobsTests {
         let didResumableJobRun: Mutex<Bool> = .init(false)
         let didTestJobRun: Mutex<Bool> = .init(false)
 
-        let jobQueue = try await self.createJobQueue(configuration: .init(queueName: "testResumableAndPausableJobs"), function: #function)
+        let jobQueue = try await createJobQueue(configuration: .init(queueName: "testResumableAndPausableJobs"), function: #function)
 
         try await testPriorityJobQueue(jobQueue: jobQueue) { queue in
             queue.registerJob(parameters: TestParameters.self) { parameters, _ in
@@ -758,7 +709,7 @@ struct JobsTests {
         let didRunCancelledJob: Mutex<Bool> = .init(false)
         let didRunNoneCancelledJob: Mutex<Bool> = .init(false)
 
-        let jobQueue = try await self.createJobQueue(
+        let jobQueue = try await createJobQueue(
             configuration: .init(
                 queueName: "testCancellableJob",
                 retentionPolicy: .init(
@@ -859,7 +810,7 @@ struct JobsTests {
     }
 
     @Test func testCancelledJobRetention() async throws {
-        let jobQueue = try await self.createJobQueue(
+        let jobQueue = try await createJobQueue(
             configuration: .init(queueName: "testCancelledJobRetention", retentionPolicy: .init(cancelledJobs: .retain))
         )
         let jobName = JobName<Int>("testCancelledJobRetention")
@@ -889,7 +840,7 @@ struct JobsTests {
     }
 
     @Test func testPausedJobRetention() async throws {
-        let jobQueue = try await self.createJobQueue(
+        let jobQueue = try await createJobQueue(
             configuration: .init(queueName: "testPausedJobRetention")
         )
         let jobName = JobName<Int>("testPausedJobRetention")
@@ -919,7 +870,7 @@ struct JobsTests {
     }
 
     @Test func testCleanupProcessingJobs() async throws {
-        let jobQueue = try await self.createJobQueue()
+        let jobQueue = try await createJobQueue()
         let jobName = JobName<Int>("testCleanupProcessingJobs")
         jobQueue.registerJob(name: jobName) { _, _ in }
 
@@ -1100,7 +1051,7 @@ struct JobsTests {
 
     @Test func testCleanupHungProcessingJobs() async throws {
         // Create queue, add job to it and push onto processing queue
-        let jobQueue = try await self.createJobQueue(
+        let jobQueue = try await createJobQueue(
             configuration: .init(queueName: #function)
         )
         async let _ = jobQueue.queue.client.run()
@@ -1121,7 +1072,7 @@ struct JobsTests {
         /// Create a second queue, and start processing. Job set to processing on first queue
         /// should be rescheduled as it is in processing state but the related driver active lock
         /// is not there
-        let jobQueue2 = try await self.createJobQueue(
+        let jobQueue2 = try await createJobQueue(
             configuration: .init(queueName: #function)
         )
         jobQueue2.registerJob(parameters: BarrierJob.self) { parameters, context in
@@ -1146,7 +1097,7 @@ struct JobsTests {
     }
 
     @Test func testLegacyValkeyCleanupJobName() async throws {
-        let jobQueue = try await self.createJobQueue(
+        let jobQueue = try await createJobQueue(
             configuration: .init(queueName: #function)
         )
 
