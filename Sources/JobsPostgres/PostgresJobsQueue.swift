@@ -185,6 +185,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         await migrations.add(CreateSwiftJobsMigrations(), skipDuplicates: true)
         await migrations.add(CreateJobMetadataMigration(), skipDuplicates: true)
         await migrations.add(CreateWorkerIDColumnMigration(), skipDuplicates: true)
+        await migrations.add(AddCreateAtColumnJobsMigration(), skipDuplicates: true)
     }
 
     ///  Cancel job
@@ -396,8 +397,8 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
                 ON CONFLICT (job_id) DO NOTHING
                 RETURNING job_id
             )
-            INSERT INTO swift_jobs.jobs (id, job, status, queue_name)
-            VALUES (\(jobID), \(buffer), \(Status.pending), \(queueName))
+            INSERT INTO swift_jobs.jobs (id, job, created_at, status, queue_name)
+            VALUES (\(jobID), \(buffer), NOW(), \(Status.pending), \(queueName))
             """,
             logger: self.logger
         )

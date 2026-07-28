@@ -31,6 +31,6 @@ struct CreateWorkerIDColumnMigration: DatabaseMigration {
         )
     }
 
-    var description: String { "__JobMetadataMigration__" }
+    var name: String { "CreateWorkerIDColumnMigration" }
     var group: DatabaseMigrationGroup { .jobQueue }
 }
