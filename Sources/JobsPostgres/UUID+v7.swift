@@ -18,9 +18,9 @@
 //===----------------------------------------------------------------------===//
 
 #if canImport(FoundationEssentials)
-import FoundationEssentials
+public import FoundationEssentials
 #else
-import Foundation
+public import Foundation
 #endif
 
 extension UUID {
@@ -30,6 +30,7 @@ extension UUID {
     ///   - date: The date to encode in the timestamp field.
     ///   - offset: A duration to add to the timestamp before encoding. Defaults to zero.
     /// - Returns: A version 7 UUID.
+    @usableFromInline
     internal static func _version7(at date: Date = .now, offset: Duration = .zero) -> UUID {
         var generator = SystemRandomNumberGenerator()
         // The most significant 48 bits contain a millisecond-precision Unix timestamp.
