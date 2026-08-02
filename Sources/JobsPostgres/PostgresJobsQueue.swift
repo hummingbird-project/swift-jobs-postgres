@@ -257,7 +257,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     @discardableResult
     @inlinable
     public func push<Parameters>(_ jobRequest: JobRequest<Parameters>, options: JobOptions) async throws -> JobID {
-        let jobID = JobID()
+        let jobID = JobID._version7()
         try await self.addJob(jobID: jobID, jobRequest: jobRequest, queueName: configuration.queueName, options: options)
         return jobID
     }
