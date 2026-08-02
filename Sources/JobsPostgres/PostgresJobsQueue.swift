@@ -168,7 +168,7 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
         self.logger = logger
         self.isStopped = .init(false)
         self.migrations = migrations
-        self.context = JobQueueContext(workerID: UUID().uuidString, queueName: configuration.queueName, metadata: [:])
+        self.context = JobQueueContext(workerID: UUID._version7(at: .now).uuidString, queueName: configuration.queueName, metadata: [:])
         self.registerCleanupJobs()
         await Self.addMigrations(to: self.migrations)
     }
