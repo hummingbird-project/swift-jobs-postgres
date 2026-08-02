@@ -104,12 +104,12 @@ extension PostgresJobQueue: JobServiceDriver {
                 logger: self.logger
             )
         }
-        cleanupJob.options.insert(.doNotRetain)
+        cleanupJob.options.insert([.doNotRetainCompleted, .doNotRetainFailed])
         self.registerJob(cleanupJob)
         var cleanupProcessingJob = JobDefinition(name: cleanupProcessingJob, retryStrategy: .dontRetry) { parameters, context in
             try await self.cleanupProcessingJobs(maxJobsToProcess: parameters.maxJobsToProcess)
         }
-        cleanupProcessingJob.options.insert(.doNotRetain)
+        cleanupProcessingJob.options.insert([.doNotRetainCompleted, .doNotRetainFailed])
         self.registerJob(cleanupProcessingJob)
 
         // Backward compatibility: register with old Valkey name for existing scheduled jobs.
@@ -122,7 +122,7 @@ extension PostgresJobQueue: JobServiceDriver {
         var legacyCleanupProcessingJob = JobDefinition(name: legacyCleanupProcessingJobName, retryStrategy: .dontRetry) { parameters, context in
             try await self.cleanupProcessingJobs(maxJobsToProcess: parameters.maxJobsToProcess)
         }
-        legacyCleanupProcessingJob.options.insert(.doNotRetain)
+        legacyCleanupProcessingJob.options.insert([.doNotRetainCompleted, .doNotRetainFailed])
         self.registerJob(legacyCleanupProcessingJob)
     }
 

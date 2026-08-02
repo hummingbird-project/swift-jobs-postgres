@@ -938,7 +938,7 @@ struct JobsTests {
                 throw FailedError()
             }
         }
-        jobDefinition.options = [.doNotRetain]
+        jobDefinition.options.insert([.doNotRetainCompleted, .doNotRetainFailed])
 
         jobQueue.registerJob(jobDefinition)
         try await self.testJobQueue(jobQueue: jobQueue, jobProcessorOptions: .init(numWorkers: 1)) { jobQueue in
