@@ -58,16 +58,16 @@ private struct JobsAPIAnyJob: Decodable, PostgresDecodable {
 
 @_spi(JobsAPI) extension PostgresJobQueue: JobsAPI {
     public func getJobs(maxNumber: Int, paginationToken: String?) async throws -> GetJobsResponse {
-        let index = paginationToken.flatMap { Int($0) } ?? 0
+        let token = paginationToken.flatMap { UUID(uuidString: $0) } ?? UUID._version7()
         let stream = try await self.client.query(
             """
             SELECT
                 id, job, last_modified, status, created_at
             FROM swift_jobs.jobs
             WHERE queue_name = \(configuration.queueName)
-            ORDER BY created_at DESC
-            LIMIT \(maxNumber)
-            OFFSET \(index)
+            AND id < \(token) 
+            ORDER BY id DESC 
+            LIMIT \(maxNumber);
             """,
             logger: self.logger
         )
@@ -83,7 +83,7 @@ private struct JobsAPIAnyJob: Decodable, PostgresDecodable {
                 )
             )
         }
-        return GetJobsResponse(paginationToken: jobs.count < maxNumber ? nil : String(index + maxNumber), jobs: jobs)
+        return GetJobsResponse(paginationToken: jobs.last?.id.uuidString, jobs: jobs)
     }
 
     public func getJob(id: UUID) async throws -> GetJobResponse? {
