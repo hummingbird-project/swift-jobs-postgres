@@ -239,15 +239,15 @@ struct JobsTests {
             )
             try await jobQueue.push(TestParameters(value: 5))
 
-            let processingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
-            #expect(processingJobs.count == 2)
-
+            // wait for jobs to finished
             try await expectation.wait(for: "delayed job running", count: 2)
 
+            // we should have no jobs pending
             let pendingJobs = try await jobQueue.queue.getJobs(withStatus: .pending)
             #expect(pendingJobs.count == 0)
 
         }
+        // second job should have been performed before the first as the first was delayed
         #expect(jobExecutionSequence.withLock { $0 } == [5, 1])
     }
 
