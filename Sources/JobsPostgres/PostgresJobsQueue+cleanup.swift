@@ -91,39 +91,39 @@ extension PostgresJobQueue: JobServiceDriver {
 
     /// register clean up job on queue
     func registerCleanupJobs() {
-        self.registerJob(
-            JobDefinition(name: cleanupJob, parameters: PostgresJobCleanupParameters.self, retryStrategy: .dontRetry) { parameters, context in
-                try await self.cleanup(
-                    pendingJobs: .doNothing,
-                    processingJobs: .doNothing,
-                    completedJobs: parameters.completedJobs,
-                    failedJobs: parameters.failedJobs,
-                    cancelledJobs: parameters.cancelledJobs,
-                    pausedJobs: parameters.pausedJobs,
-                    logger: self.logger
-                )
-            }
-        )
-        self.registerJob(
-            JobDefinition(name: cleanupProcessingJob, retryStrategy: .dontRetry) { parameters, context in
-                try await self.cleanupProcessingJobs(maxJobsToProcess: parameters.maxJobsToProcess)
-            }
-        )
+        var cleanupJob = JobDefinition(name: cleanupJob, parameters: PostgresJobCleanupParameters.self, retryStrategy: .dontRetry) {
+            parameters,
+            context in
+            try await self.cleanup(
+                pendingJobs: .doNothing,
+                processingJobs: .doNothing,
+                completedJobs: parameters.completedJobs,
+                failedJobs: parameters.failedJobs,
+                cancelledJobs: parameters.cancelledJobs,
+                pausedJobs: parameters.pausedJobs,
+                logger: self.logger
+            )
+        }
+        cleanupJob.options.insert([.doNotRetainCompleted, .doNotRetainFailed])
+        self.registerJob(cleanupJob)
+        var cleanupProcessingJob = JobDefinition(name: cleanupProcessingJob, retryStrategy: .dontRetry) { parameters, context in
+            try await self.cleanupProcessingJobs(maxJobsToProcess: parameters.maxJobsToProcess)
+        }
+        cleanupProcessingJob.options.insert([.doNotRetainCompleted, .doNotRetainFailed])
+        self.registerJob(cleanupProcessingJob)
 
         // Backward compatibility: register with old Valkey name for existing scheduled jobs.
         // WARNING: This is for backward compatibility only and will be removed in the next major release.
         // This ensures that Jobs scheduled with the legacy
         // `_Jobs_ValkeyProcessingCleanup_` name will still be processed.
-
-        var legacyCleanupProcessingJob: JobName<PostgresOrphanedJobCleanupParameters> {
+        var legacyCleanupProcessingJobName: JobName<PostgresOrphanedJobCleanupParameters> {
             .init("_Jobs_ValkeyProcessingCleanup_\(self.configuration.queueName)")
         }
-
-        self.registerJob(
-            JobDefinition(name: legacyCleanupProcessingJob, retryStrategy: .dontRetry) { parameters, context in
-                try await self.cleanupProcessingJobs(maxJobsToProcess: parameters.maxJobsToProcess)
-            }
-        )
+        var legacyCleanupProcessingJob = JobDefinition(name: legacyCleanupProcessingJobName, retryStrategy: .dontRetry) { parameters, context in
+            try await self.cleanupProcessingJobs(maxJobsToProcess: parameters.maxJobsToProcess)
+        }
+        legacyCleanupProcessingJob.options.insert([.doNotRetainCompleted, .doNotRetainFailed])
+        self.registerJob(legacyCleanupProcessingJob)
     }
 
     /// Queue cleanup schedule options

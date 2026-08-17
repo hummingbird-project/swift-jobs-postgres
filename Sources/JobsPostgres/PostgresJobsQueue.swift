@@ -280,7 +280,13 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     /// This is called to say job has finished processing and it can be deleted
     @inlinable
     public func finished(jobID: JobID) async throws {
-        if configuration.retentionPolicy.completedJobs == .doNotRetain {
+        preconditionFailure("This should no longer be called. Use finished(jobID:retain:)")
+    }
+
+    /// This is called to say job has finished processing and it can be deleted
+    @inlinable
+    public func finished(jobID: JobID, retain: Bool) async throws {
+        if !retain || configuration.retentionPolicy.completedJobs == .doNotRetain {
             try await self.delete(jobID: jobID)
         } else {
             try await self.setStatus(jobID: jobID, status: .completed)
@@ -290,7 +296,13 @@ public final class PostgresJobQueue: JobQueueDriver, CancellableJobQueue, Resuma
     /// This is called to say job has failed to run and should be put aside
     @inlinable
     public func failed(jobID: JobID, error: any Error) async throws {
-        if configuration.retentionPolicy.failedJobs == .doNotRetain {
+        preconditionFailure("This should no longer be called. Use failed(jobID:error:retain:)")
+    }
+
+    /// This is called to say job has failed to run and should be put aside
+    @inlinable
+    public func failed(jobID: JobID, error: any Error, retain: Bool) async throws {
+        if !retain || configuration.retentionPolicy.failedJobs == .doNotRetain {
             try await self.delete(jobID: jobID)
         } else {
             try await self.setStatus(jobID: jobID, status: .failed)

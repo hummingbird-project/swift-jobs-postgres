@@ -918,6 +918,46 @@ struct JobsTests {
         }
     }
 
+    @Test func testDoNotRetainOption() async throws {
+        struct TestParameters: JobParameters {
+            static let jobName = "testDoNotRetainOption"
+            let fail: Bool
+        }
+        let (stream, cont) = AsyncStream.makeStream(of: Void.self)
+        struct FailedError: Error {}
+        var logger = Logger(label: "JobsTests")
+        logger.logLevel = .trace
+        let jobQueue = try await createJobQueue(
+            configuration: .init(retentionPolicy: .init(completedJobs: .retain, failedJobs: .retain, cancelledJobs: .doNotRetain))
+        )
+        var jobDefinition = JobDefinition(
+            parameters: TestParameters.self
+        ) { parameters, context in
+            cont.yield()
+            if parameters.fail {
+                throw FailedError()
+            }
+        }
+        jobDefinition.options.insert([.doNotRetainCompleted, .doNotRetainFailed])
+
+        jobQueue.registerJob(jobDefinition)
+        try await self.testJobQueue(jobQueue: jobQueue, jobProcessorOptions: .init(numWorkers: 1)) { jobQueue in
+            try await jobQueue.push(TestParameters(fail: false))
+            try await jobQueue.push(TestParameters(fail: true))
+            try await jobQueue.push(TestParameters(fail: false))
+
+            var iterator = stream.makeAsyncIterator()
+            _ = await iterator.next()
+            _ = await iterator.next()
+            _ = await iterator.next()
+
+            let completedJobs = try await jobQueue.queue.getJobs(withStatus: .completed)
+            #expect(completedJobs.isEmpty)
+            let failedJobs = try await jobQueue.queue.getJobs(withStatus: .failed)
+            #expect(failedJobs.isEmpty)
+        }
+    }
+
     @Test func testCleanupProcessingJobs() async throws {
         let jobQueue = try await self.createJobQueue()
         let jobName = JobName<Int>("testCleanupProcessingJobs")
